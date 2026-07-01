@@ -457,13 +457,16 @@
   <script type="module">
     import { bootGlobe } from "./app.js";
 
-    const globe = bootGlobe();
+    let globe = null;
 
     const fit = FitToScreen.create({
       stage: "fit-stage",
       app: "app",
       useScaleForLayout: () => false,
-      onFit: () => globe.resize(),
+      onFit: () => {
+        if (!globe) globe = bootGlobe();
+        else globe.resize();
+      },
     });
 
     fit.bindViewportListeners();

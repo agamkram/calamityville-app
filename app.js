@@ -157,11 +157,19 @@ function updateCelestialBodies(time) {
   }
 }
 
-function aimCameraForMoon() {
-  updateCelestialBodies(new Astronomy.AstroTime(new Date()));
-  const moonDir = moonGroup.position.clone().normalize();
-  camera.position.copy(moonDir.multiplyScalar(-ZOOM_VIEW_DISTANCE.earth));
-  camera.position.y += 0.35;
+function earthCameraDistance() {
+  if (!camera) return ZOOM_VIEW_DISTANCE.earth;
+  const aspect = camera.aspect || 1;
+  if (aspect < 1) return ZOOM_VIEW_DISTANCE.earth * (1 + (1 - aspect) * 0.3);
+  return ZOOM_VIEW_DISTANCE.earth;
+}
+
+function aimCameraForEarth() {
+  if (!camera) return;
+  const dist = earthCameraDistance();
+  _viewDir.set(0, 0.12, 1);
+  _viewDir.normalize().multiplyScalar(dist);
+  camera.position.copy(EARTH_TARGET).add(_viewDir);
   camera.lookAt(EARTH_TARGET);
 }
 
@@ -212,7 +220,7 @@ function setViewCenter(center) {
     controls.target.copy(EARTH_TARGET);
     _viewDir.copy(camera.position).sub(controls.target);
     if (_viewDir.length() < ZOOM_LIMITS.earth.min) _viewDir.set(0, 0.12, 1);
-    _viewDir.normalize().multiplyScalar(ZOOM_VIEW_DISTANCE.earth);
+    _viewDir.normalize().multiplyScalar(earthCameraDistance());
     camera.position.copy(EARTH_TARGET).add(_viewDir);
   }
   controls.update();
@@ -619,7 +627,6 @@ function initScene() {
   createEarth();
   createSun();
   createMoon();
-  aimCameraForMoon();
 
   controls = new OrbitControls(camera, canvas);
   controls.target.copy(EARTH_TARGET);
@@ -685,6 +692,9 @@ export function bootGlobe() {
   try {
     initScene();
     resize();
+    aimCameraForEarth();
+    controls?.target.copy(EARTH_TARGET);
+    controls?.update();
     animate();
   } catch (err) {
     console.error("Globe init failed:", err);
