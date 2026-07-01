@@ -174,7 +174,6 @@ async function fetchEonet(hours) {
     let type = null;
     if (catId === "wildfires") type = "fire";
     else if (catId === "volcanoes") type = "volcano";
-    else if (catId === "severeStorms") type = "hurricane";
     else continue;
 
     const geom = latestGeometry(ev.geometry, hours);
