@@ -3,9 +3,11 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { DISASTER_TYPES, fetchDisasters, formatEventTime } from "./data.js";
 
 const EARTH_RADIUS = 1;
-const MOON_VISUAL_DISTANCE = 7;
-const MOON_RADIUS = 0.18;
-const PIN_ALTITUDE = 0.02;
+const MOON_VISUAL_DISTANCE = 4.5;
+const MOON_RADIUS = 0.26;
+const PIN_ALTITUDE = 0.015;
+const PIN_RADIUS = 0.011;
+const PIN_GLOW_RADIUS = 0.018;
 const AUTO_ROTATE_SPEED = 0.08;
 
 const canvas = document.getElementById("globe-canvas");
@@ -50,6 +52,16 @@ function updateMoon() {
   moonMesh.position.copy(astronomyToScene(vec));
 }
 
+/** Start with Earth and Moon both in frame — camera opposite the Moon. */
+function aimCameraForMoon() {
+  updateMoon();
+  const moonDir = moonMesh.position.clone().normalize();
+  const camDist = 3.2;
+  camera.position.copy(moonDir.multiplyScalar(-camDist));
+  camera.position.y += 0.35;
+  camera.lookAt(0, 0, 0);
+}
+
 function createStarfield() {
   const count = 4000;
   const positions = new Float32Array(count * 3);
@@ -88,13 +100,20 @@ function createEarth() {
   const bumpTex = textureLoader.load(
     "https://unpkg.com/three-globe/example/img/earth-topology.png"
   );
+  const nightTex = textureLoader.load(
+    "https://unpkg.com/three-globe/example/img/earth-night.jpg"
+  );
+  nightTex.colorSpace = THREE.SRGBColorSpace;
 
   const mat = new THREE.MeshPhongMaterial({
     map: earthTex,
+    emissiveMap: nightTex,
+    emissive: new THREE.Color(0xffeedd),
+    emissiveIntensity: 0.55,
     bumpMap: bumpTex,
     bumpScale: 0.04,
-    specular: new THREE.Color(0x222222),
-    shininess: 8,
+    specular: new THREE.Color(0x333333),
+    shininess: 6,
   });
 
   earthMesh = new THREE.Mesh(geo, mat);
@@ -117,19 +136,34 @@ function createMoon() {
   const geo = new THREE.SphereGeometry(MOON_RADIUS, 32, 32);
   const tex = textureLoader.load("moon.jpg");
   tex.colorSpace = THREE.SRGBColorSpace;
-  const mat = new THREE.MeshPhongMaterial({ map: tex, shininess: 4 });
+  const mat = new THREE.MeshPhongMaterial({
+    map: tex,
+    emissive: new THREE.Color(0x888899),
+    emissiveIntensity: 0.25,
+    shininess: 4,
+  });
   moonMesh = new THREE.Mesh(geo, mat);
+
+  const haloGeo = new THREE.SphereGeometry(MOON_RADIUS * 1.35, 16, 16);
+  const haloMat = new THREE.MeshBasicMaterial({
+    color: 0xc8d0e8,
+    transparent: true,
+    opacity: 0.12,
+  });
+  moonMesh.add(new THREE.Mesh(haloGeo, haloMat));
+
   scene.add(moonMesh);
   updateMoon();
 }
 
 function createLights() {
-  scene.add(new THREE.AmbientLight(0x334466, 0.6));
-  const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+  scene.add(new THREE.HemisphereLight(0x8899bb, 0x223344, 0.85));
+  scene.add(new THREE.AmbientLight(0x445566, 0.45));
+  const sun = new THREE.DirectionalLight(0xfff8f0, 1.5);
   sun.position.set(5, 2, 3);
   scene.add(sun);
-  const fill = new THREE.DirectionalLight(0x4466aa, 0.3);
-  fill.position.set(-4, -1, -2);
+  const fill = new THREE.DirectionalLight(0x6688cc, 0.65);
+  fill.position.set(-3, 0.5, -4);
   scene.add(fill);
 }
 
@@ -146,13 +180,13 @@ function createPin(event) {
   const typeInfo = DISASTER_TYPES[event.type] || { color: "#ffffff" };
   const pos = latLonToPosition(event.lat, event.lon, EARTH_RADIUS + PIN_ALTITUDE);
 
-  const geo = new THREE.SphereGeometry(0.025, 12, 12);
+  const geo = new THREE.SphereGeometry(PIN_RADIUS, 10, 10);
   const mat = new THREE.MeshBasicMaterial({ color: typeInfo.color });
   const pin = new THREE.Mesh(geo, mat);
   pin.position.copy(pos);
   pin.userData.event = event;
 
-  const glowGeo = new THREE.SphereGeometry(0.04, 12, 12);
+  const glowGeo = new THREE.SphereGeometry(PIN_GLOW_RADIUS, 10, 10);
   const glowMat = new THREE.MeshBasicMaterial({
     color: typeInfo.color,
     transparent: true,
@@ -258,14 +292,17 @@ function initScene() {
   createLights();
   createEarth();
   createMoon();
+  aimCameraForMoon();
 
   controls = new OrbitControls(camera, canvas);
   controls.enablePan = false;
-  controls.minDistance = 1.6;
-  controls.maxDistance = 12;
+  controls.minDistance = 1.5;
+  controls.maxDistance = 14;
   controls.enableDamping = true;
-  controls.dampingFactor = 0.06;
-  controls.rotateSpeed = 0.5;
+  controls.dampingFactor = 0.05;
+  controls.rotateSpeed = 0.65;
+  controls.zoomSpeed = 3.5;
+  controls.enableZoom = true;
 
   canvas.addEventListener("pointerdown", onPointerDown);
   sheetClose.addEventListener("click", hideEventSheet);
