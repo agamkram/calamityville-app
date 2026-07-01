@@ -90,24 +90,8 @@
     .header {
       position: absolute;
       top: max(0.75rem, env(safe-area-inset-top));
-      left: max(0.75rem, env(safe-area-inset-left));
       right: max(0.75rem, env(safe-area-inset-right));
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 0.75rem;
-    }
-
-    .title-block h1 {
-      font-size: 1.15rem;
-      font-weight: 600;
-      letter-spacing: 0.02em;
-    }
-
-    .title-block p {
-      font-size: 0.72rem;
-      color: var(--muted);
-      margin-top: 0.15rem;
+      left: auto;
     }
 
     #status {
@@ -122,7 +106,7 @@
 
     .time-toggle {
       position: absolute;
-      top: max(3.5rem, calc(env(safe-area-inset-top) + 2.75rem));
+      top: max(0.75rem, env(safe-area-inset-top));
       left: 50%;
       transform: translateX(-50%);
       display: flex;
@@ -154,7 +138,7 @@
 
     .center-toggle {
       position: absolute;
-      top: max(3.5rem, calc(env(safe-area-inset-top) + 2.75rem));
+      top: max(0.75rem, env(safe-area-inset-top));
       right: max(0.75rem, env(safe-area-inset-right));
       display: flex;
       gap: 0.25rem;
@@ -404,10 +388,6 @@
 
       <div class="chrome">
         <header class="header">
-          <div class="title-block">
-            <h1>Disaster Globe</h1>
-            <p>Recent events on Earth</p>
-          </div>
           <p id="status">Starting…</p>
         </header>
 
