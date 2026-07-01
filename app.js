@@ -125,6 +125,12 @@ function setViewCenter(center) {
     _viewDir.normalize().multiplyScalar(0.85);
     camera.position.copy(moonGroup.position).add(_viewDir);
     upgradeMoonTextures();
+  } else if (center === "sun") {
+    controls.target.copy(sunGroup.position);
+    controls.minDistance = 0.35;
+    controls.maxDistance = 5;
+    _viewDir.copy(EARTH_TARGET).sub(sunGroup.position).normalize();
+    camera.position.copy(sunGroup.position).add(_viewDir.multiplyScalar(2.5));
   } else {
     controls.target.copy(EARTH_TARGET);
     controls.minDistance = 1.5;
@@ -263,21 +269,7 @@ function createSun() {
     new THREE.SphereGeometry(SUN_RADIUS, 32, 32),
     new THREE.MeshBasicMaterial({ color: 0xfff6e8, toneMapped: false })
   );
-  core.renderOrder = 1;
-
-  const corona = new THREE.Mesh(
-    new THREE.SphereGeometry(SUN_RADIUS * 2.4, 32, 32),
-    new THREE.MeshBasicMaterial({
-      color: 0xffc860,
-      transparent: true,
-      opacity: 0.2,
-      depthWrite: false,
-      toneMapped: false,
-    })
-  );
-  corona.renderOrder = 0;
-
-  sunGroup.add(corona, core);
+  sunGroup.add(core);
   updateSun();
 }
 
@@ -519,6 +511,8 @@ function animate() {
   updateMoon();
   if (viewCenter === "moon") {
     controls.target.copy(moonGroup.position);
+  } else if (viewCenter === "sun") {
+    controls.target.copy(sunGroup.position);
   }
   controls.update();
   renderer.render(scene, camera);
