@@ -45,13 +45,12 @@ const PIN_RADIUS_TSUNAMI = 0.0085;
 const PIN_TSUNAMI_HALO_SCALE = 1.35;
 const PIN_SEGMENTS = 16;
 const POLE_LIMIT = THREE.MathUtils.degToRad(12);
-const ZOOM_VIEW_DISTANCE = { earth: 3.2, moon: 0.85, sun: 2.5 };
+const ZOOM_VIEW_DISTANCE = { earth: 3.2, moon: 0.85 };
 const ZOOM_SURFACE_CLEARANCE = 0.2;
 const ZOOM_MAX_DISTANCE = 168;
 const ZOOM_LIMITS = {
   earth: { min: EARTH_RADIUS + ZOOM_SURFACE_CLEARANCE, max: ZOOM_MAX_DISTANCE },
   moon: { min: MOON_RADIUS + ZOOM_SURFACE_CLEARANCE, max: ZOOM_MAX_DISTANCE },
-  sun: { min: SUN_RADIUS + ZOOM_SURFACE_CLEARANCE, max: ZOOM_MAX_DISTANCE },
 };
 /** Wheel uses normalized deltas; pinch uses Math.pow(ratio, zoomSpeed) — needs a far lower value. */
 const WHEEL_ZOOM_SPEED = 54;
@@ -209,15 +208,6 @@ function setViewCenter(center) {
     _viewDir.normalize().multiplyScalar(ZOOM_VIEW_DISTANCE.moon);
     camera.position.copy(moonGroup.position).add(_viewDir);
     upgradeMoonTextures();
-  } else if (center === "sun") {
-    controls.target.copy(sunGroup.position);
-    _viewDir.copy(camera.position).sub(controls.target);
-    if (_viewDir.length() < ZOOM_LIMITS.sun.min) {
-      _viewDir.copy(EARTH_TARGET).sub(sunGroup.position);
-    }
-    _viewDir.normalize().multiplyScalar(ZOOM_VIEW_DISTANCE.sun);
-    camera.position.copy(sunGroup.position).add(_viewDir);
-    upgradeSunTextures();
   } else {
     controls.target.copy(EARTH_TARGET);
     _viewDir.copy(camera.position).sub(controls.target);
@@ -684,8 +674,6 @@ function animate() {
 
   if (viewCenter === "moon") {
     controls.target.copy(moonGroup.position);
-  } else if (viewCenter === "sun") {
-    controls.target.copy(sunGroup.position);
   }
 
   controls.update();
