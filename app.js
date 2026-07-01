@@ -30,6 +30,9 @@ let autoRotate = true;
 const activeTypes = new Set(Object.keys(DISASTER_TYPES));
 const EARTH_TARGET = new THREE.Vector3(0, 0, 0);
 const _viewDir = new THREE.Vector3();
+const _toEarth = new THREE.Vector3();
+const _zAxis = new THREE.Vector3(0, 0, 1);
+const MOON_MAP_URL = "moon-map.jpg";
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -56,9 +59,12 @@ function updateMoon() {
   const time = new Astronomy.AstroTime(new Date());
   const vec = Astronomy.GeoVector(Astronomy.Body.Moon, time, false);
   moonGroup.position.copy(astronomyToScene(vec));
-  moonGroup.lookAt(EARTH_TARGET);
+
+  _toEarth.copy(moonGroup.position).negate().normalize();
+  moonGroup.quaternion.setFromUnitVectors(_zAxis, _toEarth);
+
   if (moonEarthshine) {
-    moonEarthshine.position.copy(moonGroup.position).normalize().multiplyScalar(-10);
+    moonEarthshine.position.copy(_toEarth).multiplyScalar(-10);
   }
 }
 
@@ -167,7 +173,7 @@ function createMoon() {
   scene.add(moonGroup);
 
   const geo = new THREE.SphereGeometry(MOON_RADIUS, 64, 64);
-  const tex = textureLoader.load("moon.jpg");
+  const tex = textureLoader.load(MOON_MAP_URL);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
@@ -181,6 +187,7 @@ function createMoon() {
   mat.color.multiplyScalar(1.08);
 
   moonMesh = new THREE.Mesh(geo, mat);
+  moonMesh.rotation.y = Math.PI;
   moonGroup.add(moonMesh);
   updateMoon();
 }
