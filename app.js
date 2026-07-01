@@ -19,6 +19,8 @@ const sheetClose = document.getElementById("sheet-close");
 
 let scene, camera, renderer, controls;
 let earthGroup, earthMesh, moonGroup, moonMesh, moonEarthshine, pinsGroup;
+let moonLodLevel = "low";
+let moonHqPromise = null;
 let pinMeshes = [];
 let allEvents = [];
 let currentHours = 24;
@@ -30,8 +32,23 @@ const EARTH_TARGET = new THREE.Vector3(0, 0, 0);
 const _viewDir = new THREE.Vector3();
 const _toEarth = new THREE.Vector3();
 const _zAxis = new THREE.Vector3(0, 0, 1);
-const MOON_MAP_URL = "moon-map.jpg";
-const MOON_BUMP_URL = "moon-bump.jpg?v=3";
+// Moon LOD (Solar System Scope albedo, CC BY 4.0):
+//   low:  moon-2k.jpg + moon-normal-2k.jpg  (~2 MB) — always loaded
+//   high: moon-8k.jpg + moon-normal-4k.jpg  (~19 MB) — lazy on Moon center
+const MOON_LOD = {
+  low: {
+    map: "moon-2k.jpg",
+    normal: "moon-normal-2k.jpg",
+    segments: 96,
+    normalScale: 1.35,
+  },
+  high: {
+    map: "moon-8k.jpg",
+    normal: "moon-normal-4k.jpg",
+    segments: 128,
+    normalScale: 2.0,
+  },
+};
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -91,6 +108,7 @@ function setViewCenter(center) {
     if (_viewDir.length() < 0.5) _viewDir.set(0.1, 0.15, 1);
     _viewDir.normalize().multiplyScalar(0.85);
     camera.position.copy(moonGroup.position).add(_viewDir);
+    upgradeMoonTextures();
   } else {
     controls.target.copy(EARTH_TARGET);
     controls.minDistance = 1.5;
@@ -167,24 +185,77 @@ function createEarth() {
   earthGroup.add(new THREE.Mesh(atmosGeo, atmosMat));
 }
 
+function configureMoonColorTexture(tex) {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+}
+
+function configureMoonNormalTexture(tex) {
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+}
+
+function loadMoonTexture(url) {
+  return new Promise((resolve, reject) => {
+    textureLoader.load(url, resolve, undefined, reject);
+  });
+}
+
+function applyMoonLod(lod) {
+  const cfg = MOON_LOD[lod];
+  const mat = moonMesh.material;
+  mat.normalScale.set(cfg.normalScale, cfg.normalScale);
+
+  if (moonMesh.geometry.parameters.widthSegments < cfg.segments) {
+    moonMesh.geometry.dispose();
+    moonMesh.geometry = new THREE.SphereGeometry(MOON_RADIUS, cfg.segments, cfg.segments);
+  }
+  moonLodLevel = lod;
+}
+
+async function upgradeMoonTextures() {
+  if (moonLodLevel === "high") return;
+  if (!moonHqPromise) {
+    const cfg = MOON_LOD.high;
+    moonHqPromise = Promise.all([
+      loadMoonTexture(cfg.map),
+      loadMoonTexture(cfg.normal),
+    ]);
+  }
+  try {
+    const [map, normal] = await moonHqPromise;
+    configureMoonColorTexture(map);
+    configureMoonNormalTexture(normal);
+
+    const mat = moonMesh.material;
+    mat.map?.dispose();
+    mat.normalMap?.dispose();
+    mat.map = map;
+    mat.normalMap = normal;
+    mat.needsUpdate = true;
+    applyMoonLod("high");
+  } catch (err) {
+    console.error("Moon HQ textures failed:", err);
+    moonHqPromise = null;
+  }
+}
+
 function createMoon() {
   moonGroup = new THREE.Group();
   scene.add(moonGroup);
 
-  const geo = new THREE.SphereGeometry(MOON_RADIUS, 96, 96);
-  const maxAniso = renderer.capabilities.getMaxAnisotropy();
+  const cfg = MOON_LOD.low;
+  const geo = new THREE.SphereGeometry(MOON_RADIUS, cfg.segments, cfg.segments);
 
-  const tex = textureLoader.load(MOON_MAP_URL);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = maxAniso;
+  const tex = textureLoader.load(cfg.map, configureMoonColorTexture);
+  configureMoonColorTexture(tex);
 
-  const bump = textureLoader.load(MOON_BUMP_URL);
-  bump.anisotropy = maxAniso;
+  const normal = textureLoader.load(cfg.normal, configureMoonNormalTexture);
+  configureMoonNormalTexture(normal);
 
   const mat = new THREE.MeshStandardMaterial({
     map: tex,
-    bumpMap: bump,
-    bumpScale: 0.32,
+    normalMap: normal,
+    normalScale: new THREE.Vector2(cfg.normalScale, cfg.normalScale),
     roughness: 0.72,
     metalness: 0.02,
     emissive: new THREE.Color(0x1a1a24),
