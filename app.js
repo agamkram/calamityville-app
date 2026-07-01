@@ -18,7 +18,7 @@ const sheetBackdrop = document.getElementById("sheet-backdrop");
 const sheetClose = document.getElementById("sheet-close");
 
 let scene, camera, renderer, controls;
-let earthGroup, earthMesh, moonMesh, moonFill, pinsGroup, starfield;
+let earthGroup, earthMesh, moonMesh, moonFill, pinsGroup;
 let pinMeshes = [];
 let currentHours = 24;
 let animationId = null;
@@ -29,6 +29,7 @@ const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 
 const textureLoader = new THREE.TextureLoader();
+const STAR_MAP_URL = "stars-8k.jpg";
 
 function latLonToPosition(lat, lon, radius) {
   const phi = THREE.MathUtils.degToRad(90 - lat);
@@ -64,6 +65,7 @@ function aimCameraForMoon() {
 
 function configureSkyTexture(tex) {
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.mapping = THREE.EquirectangularReflectionMapping;
   tex.minFilter = THREE.LinearFilter;
   tex.magFilter = THREE.LinearFilter;
   tex.generateMipmaps = false;
@@ -72,21 +74,12 @@ function configureSkyTexture(tex) {
   }
 }
 
-/** Real 8K all-sky star map (Tycho catalog + Milky Way), CC BY 4.0 Solar System Scope. */
-function createStarfield() {
-  const tex = textureLoader.load("stars-milky-way.jpg", configureSkyTexture);
-  configureSkyTexture(tex);
-  const geo = new THREE.SphereGeometry(120, 96, 48);
-  const mat = new THREE.MeshBasicMaterial({
-    map: tex,
-    side: THREE.BackSide,
-    depthWrite: false,
-    toneMapped: false,
+/** 8K Tycho + Milky Way equirectangular sky (CC BY 4.0 Solar System Scope). */
+function loadStarBackground() {
+  textureLoader.load(STAR_MAP_URL, (tex) => {
+    configureSkyTexture(tex);
+    scene.background = tex;
   });
-  const sky = new THREE.Mesh(geo, mat);
-  sky.renderOrder = -1;
-  sky.frustumCulled = false;
-  return sky;
 }
 
 function createEarth() {
@@ -271,9 +264,7 @@ function initScene() {
   renderer.setClearColor(0x020308);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-  starfield = createStarfield();
-  scene.add(starfield);
-  if (starfield.material.map) configureSkyTexture(starfield.material.map);
+  loadStarBackground();
 
   createLights();
   createEarth();
