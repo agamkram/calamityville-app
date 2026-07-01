@@ -7,6 +7,42 @@ const MOON_VISUAL_DISTANCE = 4.5;
 const MOON_RADIUS = 0.26;
 const SUN_VISUAL_DISTANCE = 85;
 const SUN_RADIUS = 0.5;
+// Sun LOD (Solar System Scope photosphere, CC BY 4.0):
+//   low:  sun-2k.jpg (~800 KB) — always loaded
+//   high: sun-8k.jpg (~3.5 MB) — lazy on Sun center
+const SUN_LOD = {
+  low: { map: "sun-2k.jpg", segments: 64 },
+  high: { map: "sun-8k.jpg", segments: 96 },
+};
+
+const SUN_VERTEX_SHADER = `
+  varying vec2 vUv;
+  varying vec3 vNormal;
+  varying vec3 vViewPosition;
+  void main() {
+    vUv = uv;
+    vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+    vViewPosition = -mvPos.xyz;
+    vNormal = normalize(normalMatrix * normal);
+    gl_Position = projectionMatrix * mvPos;
+  }
+`;
+
+const SUN_FRAGMENT_SHADER = `
+  uniform sampler2D sunMap;
+  varying vec2 vUv;
+  varying vec3 vNormal;
+  varying vec3 vViewPosition;
+  void main() {
+    vec3 viewDir = normalize(vViewPosition);
+    float limb = pow(max(dot(normalize(vNormal), viewDir), 0.0), 0.5);
+    vec3 surface = texture2D(sunMap, vUv).rgb;
+    vec3 core = surface * vec3(1.4, 1.2, 0.95);
+    vec3 edge = surface * vec3(0.7, 0.38, 0.1);
+    vec3 color = mix(edge, core, limb);
+    gl_FragColor = vec4(color, 1.0);
+  }
+`;
 const PIN_ALTITUDE = 0.015;
 const PIN_RADIUS = 0.011;
 const POLE_LIMIT = THREE.MathUtils.degToRad(12);
@@ -20,9 +56,11 @@ const sheetBackdrop = document.getElementById("sheet-backdrop");
 const sheetClose = document.getElementById("sheet-close");
 
 let scene, camera, renderer, controls;
-let earthGroup, earthMesh, moonGroup, moonMesh, moonEarthshine, sunGroup, sunLight, fillLight, pinsGroup;
+let earthGroup, earthMesh, moonGroup, moonMesh, moonEarthshine, sunGroup, sunMesh, sunLight, fillLight, pinsGroup;
 let moonLodLevel = "low";
 let moonHqPromise = null;
+let sunLodLevel = "low";
+let sunHqPromise = null;
 let pinMeshes = [];
 let allEvents = [];
 let currentHours = 24;
@@ -131,6 +169,7 @@ function setViewCenter(center) {
     controls.maxDistance = 5;
     _viewDir.copy(EARTH_TARGET).sub(sunGroup.position).normalize();
     camera.position.copy(sunGroup.position).add(_viewDir.multiplyScalar(2.5));
+    upgradeSunTextures();
   } else {
     controls.target.copy(EARTH_TARGET);
     controls.minDistance = 1.5;
@@ -261,15 +300,59 @@ async function upgradeMoonTextures() {
   }
 }
 
+function configureSunTexture(tex) {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+}
+
+function createSunMaterial(tex) {
+  configureSunTexture(tex);
+  return new THREE.ShaderMaterial({
+    uniforms: { sunMap: { value: tex } },
+    vertexShader: SUN_VERTEX_SHADER,
+    fragmentShader: SUN_FRAGMENT_SHADER,
+    toneMapped: false,
+  });
+}
+
+function applySunLod(lod) {
+  const cfg = SUN_LOD[lod];
+  if (sunMesh.geometry.parameters.widthSegments < cfg.segments) {
+    sunMesh.geometry.dispose();
+    sunMesh.geometry = new THREE.SphereGeometry(SUN_RADIUS, cfg.segments, cfg.segments);
+  }
+  sunLodLevel = lod;
+}
+
+async function upgradeSunTextures() {
+  if (sunLodLevel === "high") return;
+  if (!sunHqPromise) {
+    sunHqPromise = loadMoonTexture(SUN_LOD.high.map);
+  }
+  try {
+    const tex = await sunHqPromise;
+    configureSunTexture(tex);
+    sunMesh.material.uniforms.sunMap.value = tex;
+    applySunLod("high");
+  } catch (err) {
+    console.error("Sun HQ texture failed:", err);
+    sunHqPromise = null;
+  }
+}
+
 function createSun() {
   sunGroup = new THREE.Group();
   scene.add(sunGroup);
 
-  const core = new THREE.Mesh(
-    new THREE.SphereGeometry(SUN_RADIUS, 32, 32),
-    new THREE.MeshBasicMaterial({ color: 0xfff6e8, toneMapped: false })
+  const cfg = SUN_LOD.low;
+  const tex = textureLoader.load(cfg.map, configureSunTexture);
+  configureSunTexture(tex);
+
+  sunMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(SUN_RADIUS, cfg.segments, cfg.segments),
+    createSunMaterial(tex)
   );
-  sunGroup.add(core);
+  sunGroup.add(sunMesh);
   updateSun();
 }
 
