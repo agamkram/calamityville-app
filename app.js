@@ -5,6 +5,8 @@ import { DISASTER_TYPES, fetchDisasters, formatEventTime } from "./data.js";
 const EARTH_RADIUS = 1;
 const MOON_VISUAL_DISTANCE = 4.5;
 const MOON_RADIUS = 0.26;
+const SUN_VISUAL_DISTANCE = 85;
+const SUN_RADIUS = 0.5;
 const PIN_ALTITUDE = 0.015;
 const PIN_RADIUS = 0.011;
 const POLE_LIMIT = THREE.MathUtils.degToRad(12);
@@ -18,7 +20,7 @@ const sheetBackdrop = document.getElementById("sheet-backdrop");
 const sheetClose = document.getElementById("sheet-close");
 
 let scene, camera, renderer, controls;
-let earthGroup, earthMesh, moonGroup, moonMesh, moonEarthshine, pinsGroup;
+let earthGroup, earthMesh, moonGroup, moonMesh, moonEarthshine, sunGroup, sunLight, fillLight, pinsGroup;
 let moonLodLevel = "low";
 let moonHqPromise = null;
 let pinMeshes = [];
@@ -66,15 +68,28 @@ function latLonToPosition(lat, lon, radius) {
   );
 }
 
-function astronomyToScene(vec) {
-  const norm = new THREE.Vector3(vec.x, vec.z, -vec.y).normalize();
-  return norm.multiplyScalar(MOON_VISUAL_DISTANCE);
+function astronomyDirection(vec) {
+  return new THREE.Vector3(vec.x, vec.z, -vec.y).normalize();
+}
+
+function astronomyToScene(vec, distance) {
+  return astronomyDirection(vec).multiplyScalar(distance);
+}
+
+function astroTime() {
+  return new Astronomy.AstroTime(new Date());
+}
+
+function updateSun() {
+  const vec = Astronomy.GeoVector(Astronomy.Body.Sun, astroTime(), false);
+  sunGroup.position.copy(astronomyToScene(vec, SUN_VISUAL_DISTANCE));
+  sunLight.position.copy(sunGroup.position);
+  if (fillLight) fillLight.position.copy(sunGroup.position).negate();
 }
 
 function updateMoon() {
-  const time = new Astronomy.AstroTime(new Date());
-  const vec = Astronomy.GeoVector(Astronomy.Body.Moon, time, false);
-  moonGroup.position.copy(astronomyToScene(vec));
+  const vec = Astronomy.GeoVector(Astronomy.Body.Moon, astroTime(), false);
+  moonGroup.position.copy(astronomyToScene(vec, MOON_VISUAL_DISTANCE));
 
   _toEarth.copy(moonGroup.position).negate().normalize();
   moonGroup.quaternion.setFromUnitVectors(_zAxis, _toEarth);
@@ -86,6 +101,7 @@ function updateMoon() {
 
 /** Start with Earth and Moon both in frame — camera opposite the Moon. */
 function aimCameraForMoon() {
+  updateSun();
   updateMoon();
   const moonDir = moonGroup.position.clone().normalize();
   const camDist = 3.2;
@@ -239,6 +255,32 @@ async function upgradeMoonTextures() {
   }
 }
 
+function createSun() {
+  sunGroup = new THREE.Group();
+  scene.add(sunGroup);
+
+  const core = new THREE.Mesh(
+    new THREE.SphereGeometry(SUN_RADIUS, 32, 32),
+    new THREE.MeshBasicMaterial({ color: 0xfff6e8, toneMapped: false })
+  );
+  core.renderOrder = 1;
+
+  const corona = new THREE.Mesh(
+    new THREE.SphereGeometry(SUN_RADIUS * 2.4, 32, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0xffc860,
+      transparent: true,
+      opacity: 0.2,
+      depthWrite: false,
+      toneMapped: false,
+    })
+  );
+  corona.renderOrder = 0;
+
+  sunGroup.add(corona, core);
+  updateSun();
+}
+
 function createMoon() {
   moonGroup = new THREE.Group();
   scene.add(moonGroup);
@@ -272,12 +314,10 @@ function createMoon() {
 function createLights() {
   scene.add(new THREE.HemisphereLight(0xd0e0f8, 0x7a8a9e, 2.2));
   scene.add(new THREE.AmbientLight(0x99aabb, 1.2));
-  const sun = new THREE.DirectionalLight(0xfff8f0, 1.55);
-  sun.position.set(5, 2, 3);
-  scene.add(sun);
-  const fill = new THREE.DirectionalLight(0xbbccdd, 1.4);
-  fill.position.set(-5, 1, -4);
-  scene.add(fill);
+  sunLight = new THREE.DirectionalLight(0xfff8f0, 1.55);
+  scene.add(sunLight);
+  fillLight = new THREE.DirectionalLight(0xbbccdd, 1.4);
+  scene.add(fillLight);
   moonEarthshine = new THREE.DirectionalLight(0xb0c0d8, 0.75);
   scene.add(moonEarthshine);
 }
@@ -424,6 +464,7 @@ function initScene() {
 
   createLights();
   createEarth();
+  createSun();
   createMoon();
   aimCameraForMoon();
 
@@ -474,6 +515,7 @@ function resize() {
 function animate() {
   animationId = requestAnimationFrame(animate);
 
+  updateSun();
   updateMoon();
   if (viewCenter === "moon") {
     controls.target.copy(moonGroup.position);
