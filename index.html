@@ -87,23 +87,6 @@
 
     .chrome > * { pointer-events: auto; }
 
-    .header {
-      position: absolute;
-      top: max(0.75rem, env(safe-area-inset-top));
-      right: max(0.75rem, env(safe-area-inset-right));
-      left: auto;
-    }
-
-    #status {
-      font-size: 0.68rem;
-      color: var(--muted);
-      text-align: right;
-      max-width: 10rem;
-      line-height: 1.35;
-    }
-
-    #status.error { color: #ff8a7a; }
-
     .time-toggle {
       position: absolute;
       top: max(0.75rem, env(safe-area-inset-top));
@@ -165,6 +148,19 @@
     .center-btn.active {
       background: rgba(74, 158, 255, 0.22);
       color: var(--text);
+    }
+
+    @media (max-width: 767px) {
+      .time-toggle {
+        left: max(0.75rem, env(safe-area-inset-left));
+        transform: none;
+      }
+
+      .time-btn,
+      .center-btn {
+        font-size: 0.68rem;
+        padding: 0.32rem 0.6rem;
+      }
     }
 
     .legend {
@@ -387,10 +383,6 @@
       <canvas id="globe-canvas" aria-label="3D Earth and Moon. Drag to orbit, pinch to zoom, tap pins for event details."></canvas>
 
       <div class="chrome">
-        <header class="header">
-          <p id="status">Starting…</p>
-        </header>
-
         <div class="time-toggle" role="group" aria-label="Time range">
           <button type="button" class="time-btn active" data-hours="24">24h</button>
           <button type="button" class="time-btn" data-hours="48">48h</button>

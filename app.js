@@ -73,7 +73,6 @@ const MOON_LOD = {
 
 const canvas = document.getElementById("globe-canvas");
 const loadingEl = document.getElementById("loading");
-const statusEl = document.getElementById("status");
 const countEl = document.getElementById("event-count");
 const sheetEl = document.getElementById("event-sheet");
 const sheetBackdrop = document.getElementById("sheet-backdrop");
@@ -554,29 +553,16 @@ function hideEventSheet() {
   sheetBackdrop.classList.remove("open");
 }
 
-function setStatus(msg, isError = false) {
-  statusEl.textContent = msg;
-  statusEl.classList.toggle("error", isError);
-}
-
 async function loadEvents(hours, { background = false } = {}) {
   if (eventsLoading) return;
   eventsLoading = true;
   currentHours = hours;
-  if (!background) {
-    loadingEl?.classList.add("visible");
-    setStatus("Loading events…");
-  }
+  if (!background) loadingEl?.classList.add("visible");
   try {
     const { events, errors } = await fetchDisasters(hours);
     setPins(events);
-    if (errors.length) {
-      setStatus(`Loaded with partial data (${errors.join(", ")} unavailable)`);
-    } else {
-      setStatus(`Past ${hours} hours`);
-    }
+    if (errors.length) console.warn("Partial disaster data:", errors.join(", "));
   } catch (err) {
-    if (!background) setStatus("Failed to load events", true);
     console.error(err);
   } finally {
     if (!background) loadingEl?.classList.remove("visible");
@@ -716,7 +702,6 @@ export function bootGlobe() {
     animate();
   } catch (err) {
     console.error("Globe init failed:", err);
-    setStatus("Globe failed to start", true);
     loadingEl.classList.remove("visible");
   }
   loadEvents(currentHours);
