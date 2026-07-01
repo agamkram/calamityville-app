@@ -157,11 +157,19 @@ function updateCelestialBodies(time) {
   }
 }
 
+/** Pull back far enough for the sphere to fit the narrower horizontal FOV on portrait phones. */
 function earthCameraDistance() {
   if (!camera) return ZOOM_VIEW_DISTANCE.earth;
-  const aspect = camera.aspect || 1;
-  if (aspect < 1) return ZOOM_VIEW_DISTANCE.earth * (1 + (1 - aspect) * 0.3);
-  return ZOOM_VIEW_DISTANCE.earth;
+
+  const vFovRad = THREE.MathUtils.degToRad(camera.fov);
+  const aspect = Math.max(camera.aspect || 1, 0.01);
+  const hFovRad = 2 * Math.atan(Math.tan(vFovRad / 2) * aspect);
+  const radius = EARTH_RADIUS * 1.02;
+  const margin = 0.86;
+  const distV = radius / (Math.tan(vFovRad / 2) * margin);
+  const distH = radius / (Math.tan(hFovRad / 2) * margin);
+
+  return Math.max(distV, distH, ZOOM_VIEW_DISTANCE.earth);
 }
 
 function aimCameraForEarth() {
@@ -672,6 +680,16 @@ function resize() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   renderer.setSize(w, h, false);
+
+  if (viewCenter === "earth" && controls) {
+    const minDist = earthCameraDistance();
+    _viewDir.copy(camera.position).sub(controls.target);
+    if (_viewDir.length() < minDist) {
+      _viewDir.normalize().multiplyScalar(minDist);
+      camera.position.copy(controls.target).add(_viewDir);
+      controls.update();
+    }
+  }
 }
 
 function animate() {
