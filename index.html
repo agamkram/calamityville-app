@@ -149,6 +149,37 @@
       color: var(--text);
     }
 
+    .center-toggle {
+      position: absolute;
+      top: max(3.5rem, calc(env(safe-area-inset-top) + 2.75rem));
+      right: max(0.75rem, env(safe-area-inset-right));
+      display: flex;
+      gap: 0.25rem;
+      padding: 0.2rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    .center-btn {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.72rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .center-btn.active {
+      background: rgba(74, 158, 255, 0.22);
+      color: var(--text);
+    }
+
     .legend {
       position: absolute;
       bottom: max(0.75rem, env(safe-area-inset-bottom));
@@ -167,9 +198,30 @@
     }
 
     .legend-item {
-      display: flex;
+      display: inline-flex;
       align-items: center;
       gap: 0.3rem;
+      border: none;
+      background: transparent;
+      font: inherit;
+      font-size: inherit;
+      color: inherit;
+      cursor: pointer;
+      padding: 0.15rem 0.2rem;
+      border-radius: 0.35rem;
+      transition: opacity 0.2s, background 0.15s;
+    }
+
+    .legend-item:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .legend-item.off {
+      opacity: 0.32;
+    }
+
+    .legend-item.active {
+      opacity: 1;
     }
 
     .legend-dot {
@@ -331,7 +383,7 @@
 <body>
   <div id="fit-stage" class="fit-stage">
     <div id="app" class="app">
-      <canvas id="globe-canvas" aria-label="3D Earth globe. Drag to orbit, pinch to zoom, tap pins for details."></canvas>
+      <canvas id="globe-canvas" aria-label="3D Earth and Moon. Drag to orbit, pinch to zoom, tap pins for event details."></canvas>
 
       <div class="chrome">
         <header class="header">
@@ -348,11 +400,24 @@
           <button type="button" class="time-btn" data-hours="72">72h</button>
         </div>
 
-        <div class="legend" aria-label="Event types">
-          <span class="legend-item"><span class="legend-dot" style="background:#ff6b4a"></span>Earthquake</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#e056fd"></span>Volcano</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#4a9eff"></span>Hurricane</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#ff9f43"></span>Wildfire</span>
+        <div class="center-toggle" role="group" aria-label="Orbit center">
+          <button type="button" class="center-btn active" data-center="earth">Earth</button>
+          <button type="button" class="center-btn" data-center="moon">Moon</button>
+        </div>
+
+        <div class="legend" role="group" aria-label="Filter event types">
+          <button type="button" class="legend-item active" data-type="earthquake" aria-pressed="true">
+            <span class="legend-dot" style="background:#ff6b4a"></span>Earthquake
+          </button>
+          <button type="button" class="legend-item active" data-type="volcano" aria-pressed="true">
+            <span class="legend-dot" style="background:#e056fd"></span>Volcano
+          </button>
+          <button type="button" class="legend-item active" data-type="hurricane" aria-pressed="true">
+            <span class="legend-dot" style="background:#4a9eff"></span>Hurricane
+          </button>
+          <button type="button" class="legend-item active" data-type="fire" aria-pressed="true">
+            <span class="legend-dot" style="background:#ff9f43"></span>Wildfire
+          </button>
         </div>
 
         <p id="event-count">0 events</p>

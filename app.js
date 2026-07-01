@@ -18,12 +18,18 @@ const sheetBackdrop = document.getElementById("sheet-backdrop");
 const sheetClose = document.getElementById("sheet-close");
 
 let scene, camera, renderer, controls;
-let earthGroup, earthMesh, moonMesh, moonFill, pinsGroup;
+let earthGroup, earthMesh, moonGroup, moonMesh, moonEarthshine, pinsGroup;
 let pinMeshes = [];
+let allEvents = [];
 let currentHours = 24;
+let viewCenter = "earth";
 let animationId = null;
 let clock = new THREE.Clock();
 let autoRotate = true;
+
+const activeTypes = new Set(Object.keys(DISASTER_TYPES));
+const EARTH_TARGET = new THREE.Vector3(0, 0, 0);
+const _viewDir = new THREE.Vector3();
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -49,18 +55,47 @@ function astronomyToScene(vec) {
 function updateMoon() {
   const time = new Astronomy.AstroTime(new Date());
   const vec = Astronomy.GeoVector(Astronomy.Body.Moon, time, false);
-  moonMesh.position.copy(astronomyToScene(vec));
-  if (moonFill) moonFill.position.copy(moonMesh.position);
+  moonGroup.position.copy(astronomyToScene(vec));
+  moonGroup.lookAt(EARTH_TARGET);
+  if (moonEarthshine) {
+    moonEarthshine.position.copy(moonGroup.position).normalize().multiplyScalar(-10);
+  }
 }
 
 /** Start with Earth and Moon both in frame — camera opposite the Moon. */
 function aimCameraForMoon() {
   updateMoon();
-  const moonDir = moonMesh.position.clone().normalize();
+  const moonDir = moonGroup.position.clone().normalize();
   const camDist = 3.2;
   camera.position.copy(moonDir.multiplyScalar(-camDist));
   camera.position.y += 0.35;
-  camera.lookAt(0, 0, 0);
+  camera.lookAt(EARTH_TARGET);
+}
+
+function setViewCenter(center) {
+  viewCenter = center;
+  document.querySelectorAll(".center-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.center === center);
+  });
+
+  if (center === "moon") {
+    controls.target.copy(moonGroup.position);
+    controls.minDistance = 0.4;
+    controls.maxDistance = 2.2;
+    _viewDir.copy(camera.position).sub(controls.target);
+    if (_viewDir.length() < 0.5) _viewDir.set(0.1, 0.15, 1);
+    _viewDir.normalize().multiplyScalar(0.85);
+    camera.position.copy(moonGroup.position).add(_viewDir);
+  } else {
+    controls.target.copy(EARTH_TARGET);
+    controls.minDistance = 1.5;
+    controls.maxDistance = 14;
+    _viewDir.copy(camera.position).sub(controls.target);
+    if (_viewDir.length() < 1) _viewDir.set(0, 0.12, 1);
+    _viewDir.normalize().multiplyScalar(3.2);
+    camera.position.copy(EARTH_TARGET).add(_viewDir);
+  }
+  controls.update();
 }
 
 function configureSkyTexture(tex) {
@@ -128,17 +163,25 @@ function createEarth() {
 }
 
 function createMoon() {
-  const geo = new THREE.SphereGeometry(MOON_RADIUS, 32, 32);
+  moonGroup = new THREE.Group();
+  scene.add(moonGroup);
+
+  const geo = new THREE.SphereGeometry(MOON_RADIUS, 64, 64);
   const tex = textureLoader.load("moon.jpg");
   tex.colorSpace = THREE.SRGBColorSpace;
-  const mat = new THREE.MeshPhongMaterial({
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+  const mat = new THREE.MeshStandardMaterial({
     map: tex,
-    emissive: new THREE.Color(0x888899),
-    emissiveIntensity: 0.25,
-    shininess: 4,
+    roughness: 0.88,
+    metalness: 0.04,
+    emissive: new THREE.Color(0x1a1a24),
+    emissiveIntensity: 0.12,
   });
+  mat.color.multiplyScalar(1.08);
+
   moonMesh = new THREE.Mesh(geo, mat);
-  scene.add(moonMesh);
+  moonGroup.add(moonMesh);
   updateMoon();
 }
 
@@ -151,8 +194,8 @@ function createLights() {
   const fill = new THREE.DirectionalLight(0xbbccdd, 1.4);
   fill.position.set(-5, 1, -4);
   scene.add(fill);
-  moonFill = new THREE.DirectionalLight(0xaabbcc, 0.65);
-  scene.add(moonFill);
+  moonEarthshine = new THREE.DirectionalLight(0xb0c0d8, 0.75);
+  scene.add(moonEarthshine);
 }
 
 function clearPins() {
@@ -178,12 +221,41 @@ function createPin(event) {
   pinMeshes.push(pin);
 }
 
-function setPins(events) {
+function updateEventCount(visible, total) {
+  if (visible === total) {
+    countEl.textContent = `${total} event${total === 1 ? "" : "s"}`;
+  } else {
+    countEl.textContent = `${visible} of ${total} events`;
+  }
+}
+
+function applyPinFilter() {
   clearPins();
-  for (const ev of events) {
+  const visible = allEvents.filter((ev) => activeTypes.has(ev.type));
+  for (const ev of visible) {
     if (Number.isFinite(ev.lat) && Number.isFinite(ev.lon)) createPin(ev);
   }
-  countEl.textContent = `${events.length} event${events.length === 1 ? "" : "s"}`;
+  updateEventCount(visible.length, allEvents.length);
+}
+
+function setPins(events) {
+  allEvents = events;
+  applyPinFilter();
+}
+
+function toggleLegendType(type) {
+  if (activeTypes.has(type)) {
+    activeTypes.delete(type);
+  } else {
+    activeTypes.add(type);
+  }
+  document.querySelectorAll(".legend-item").forEach((btn) => {
+    const on = activeTypes.has(btn.dataset.type);
+    btn.classList.toggle("active", on);
+    btn.classList.toggle("off", !on);
+    btn.setAttribute("aria-pressed", String(on));
+  });
+  applyPinFilter();
 }
 
 function showEventSheet(event) {
@@ -274,6 +346,7 @@ function initScene() {
   aimCameraForMoon();
 
   controls = new OrbitControls(camera, canvas);
+  controls.target.copy(EARTH_TARGET);
   controls.enablePan = false;
   controls.minDistance = 1.5;
   controls.maxDistance = 14;
@@ -292,6 +365,14 @@ function initScene() {
       btn.classList.add("active");
       loadEvents(Number(btn.dataset.hours));
     });
+  });
+
+  document.querySelectorAll(".center-btn").forEach((btn) => {
+    btn.addEventListener("click", () => setViewCenter(btn.dataset.center));
+  });
+
+  document.querySelectorAll(".legend-item").forEach((btn) => {
+    btn.addEventListener("click", () => toggleLegendType(btn.dataset.type));
   });
 }
 
@@ -314,6 +395,9 @@ function animate() {
   }
 
   updateMoon();
+  if (viewCenter === "moon") {
+    controls.target.copy(moonGroup.position);
+  }
   controls.update();
   renderer.render(scene, camera);
 }
