@@ -31,6 +31,7 @@ const _viewDir = new THREE.Vector3();
 const _toEarth = new THREE.Vector3();
 const _zAxis = new THREE.Vector3(0, 0, 1);
 const MOON_MAP_URL = "moon-map.jpg";
+const MOON_BUMP_URL = "moon-bump.jpg";
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -170,15 +171,22 @@ function createMoon() {
   moonGroup = new THREE.Group();
   scene.add(moonGroup);
 
-  const geo = new THREE.SphereGeometry(MOON_RADIUS, 64, 64);
+  const geo = new THREE.SphereGeometry(MOON_RADIUS, 96, 96);
+  const maxAniso = renderer.capabilities.getMaxAnisotropy();
+
   const tex = textureLoader.load(MOON_MAP_URL);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  tex.anisotropy = maxAniso;
+
+  const bump = textureLoader.load(MOON_BUMP_URL);
+  bump.anisotropy = maxAniso;
 
   const mat = new THREE.MeshStandardMaterial({
     map: tex,
-    roughness: 0.88,
-    metalness: 0.04,
+    bumpMap: bump,
+    bumpScale: 0.045,
+    roughness: 0.82,
+    metalness: 0.02,
     emissive: new THREE.Color(0x1a1a24),
     emissiveIntensity: 0.12,
   });
