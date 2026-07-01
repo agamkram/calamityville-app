@@ -54,7 +54,7 @@ const ZOOM_LIMITS = {
 };
 /** Wheel uses normalized deltas; pinch uses Math.pow(ratio, zoomSpeed) — needs a far lower value. */
 const WHEEL_ZOOM_SPEED = 54;
-const TOUCH_ZOOM_SPEED = 2.5;
+const TOUCH_ZOOM_SPEED = 1.9;
 
 const MOON_LOD = {
   low: {
