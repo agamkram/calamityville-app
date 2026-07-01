@@ -18,7 +18,7 @@ const sheetBackdrop = document.getElementById("sheet-backdrop");
 const sheetClose = document.getElementById("sheet-close");
 
 let scene, camera, renderer, controls;
-let earthGroup, earthMesh, moonMesh, pinsGroup, starfield;
+let earthGroup, earthMesh, moonMesh, moonFill, pinsGroup, starfield;
 let pinMeshes = [];
 let currentHours = 24;
 let animationId = null;
@@ -49,6 +49,7 @@ function updateMoon() {
   const time = new Astronomy.AstroTime(new Date());
   const vec = Astronomy.GeoVector(Astronomy.Body.Moon, time, false);
   moonMesh.position.copy(astronomyToScene(vec));
+  if (moonFill) moonFill.position.copy(moonMesh.position);
 }
 
 /** Start with Earth and Moon both in frame — camera opposite the Moon. */
@@ -61,18 +62,30 @@ function aimCameraForMoon() {
   camera.lookAt(0, 0, 0);
 }
 
-/** Real all-sky star map (Tycho catalog + Milky Way), CC BY 4.0 Solar System Scope. */
-function createStarfield() {
-  const tex = textureLoader.load("stars-milky-way.jpg");
+function configureSkyTexture(tex) {
   tex.colorSpace = THREE.SRGBColorSpace;
-  const geo = new THREE.SphereGeometry(120, 64, 32);
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  if (renderer) {
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  }
+}
+
+/** Real 8K all-sky star map (Tycho catalog + Milky Way), CC BY 4.0 Solar System Scope. */
+function createStarfield() {
+  const tex = textureLoader.load("stars-milky-way.jpg", configureSkyTexture);
+  configureSkyTexture(tex);
+  const geo = new THREE.SphereGeometry(120, 96, 48);
   const mat = new THREE.MeshBasicMaterial({
     map: tex,
     side: THREE.BackSide,
     depthWrite: false,
+    toneMapped: false,
   });
   const sky = new THREE.Mesh(geo, mat);
   sky.renderOrder = -1;
+  sky.frustumCulled = false;
   return sky;
 }
 
@@ -97,7 +110,7 @@ function createEarth() {
     map: earthTex,
     emissiveMap: nightTex,
     emissive: new THREE.Color(0xffeedd),
-    emissiveIntensity: 0.55,
+    emissiveIntensity: 0.9,
     bumpMap: bumpTex,
     bumpScale: 0.04,
     specular: new THREE.Color(0x333333),
@@ -136,14 +149,16 @@ function createMoon() {
 }
 
 function createLights() {
-  scene.add(new THREE.HemisphereLight(0x8899bb, 0x223344, 0.85));
-  scene.add(new THREE.AmbientLight(0x445566, 0.45));
-  const sun = new THREE.DirectionalLight(0xfff8f0, 1.5);
+  scene.add(new THREE.HemisphereLight(0xb8c8e8, 0x4a5a6e, 1.45));
+  scene.add(new THREE.AmbientLight(0x667788, 0.8));
+  const sun = new THREE.DirectionalLight(0xfff8f0, 1.15);
   sun.position.set(5, 2, 3);
   scene.add(sun);
-  const fill = new THREE.DirectionalLight(0x6688cc, 0.65);
-  fill.position.set(-3, 0.5, -4);
+  const fill = new THREE.DirectionalLight(0x99aacc, 1.05);
+  fill.position.set(-5, 1, -4);
   scene.add(fill);
+  moonFill = new THREE.DirectionalLight(0x8899bb, 0.4);
+  scene.add(moonFill);
 }
 
 function clearPins() {
@@ -258,6 +273,7 @@ function initScene() {
 
   starfield = createStarfield();
   scene.add(starfield);
+  if (starfield.material.map) configureSkyTexture(starfield.material.map);
 
   createLights();
   createEarth();
