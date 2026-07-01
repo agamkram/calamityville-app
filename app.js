@@ -31,7 +31,7 @@ const _viewDir = new THREE.Vector3();
 const _toEarth = new THREE.Vector3();
 const _zAxis = new THREE.Vector3(0, 0, 1);
 const MOON_MAP_URL = "moon-map.jpg";
-const MOON_BUMP_URL = "moon-bump.jpg";
+const MOON_BUMP_URL = "moon-bump.jpg?v=2";
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -184,8 +184,8 @@ function createMoon() {
   const mat = new THREE.MeshStandardMaterial({
     map: tex,
     bumpMap: bump,
-    bumpScale: 0.045,
-    roughness: 0.82,
+    bumpScale: 0.16,
+    roughness: 0.78,
     metalness: 0.02,
     emissive: new THREE.Color(0x1a1a24),
     emissiveIntensity: 0.12,
