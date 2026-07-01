@@ -7,7 +7,7 @@ const MOON_VISUAL_DISTANCE = 4.5;
 const MOON_RADIUS = 0.26;
 const PIN_ALTITUDE = 0.015;
 const PIN_RADIUS = 0.011;
-const AUTO_ROTATE_SPEED = 0.08;
+const POLE_LIMIT = THREE.MathUtils.degToRad(12);
 
 const canvas = document.getElementById("globe-canvas");
 const loadingEl = document.getElementById("loading");
@@ -24,8 +24,6 @@ let allEvents = [];
 let currentHours = 24;
 let viewCenter = "earth";
 let animationId = null;
-let clock = new THREE.Clock();
-let autoRotate = true;
 
 const activeTypes = new Set(Object.keys(DISASTER_TYPES));
 const EARTH_TARGET = new THREE.Vector3(0, 0, 0);
@@ -282,13 +280,11 @@ function showEventSheet(event) {
   }
   sheetEl.classList.add("open");
   sheetBackdrop.classList.add("open");
-  autoRotate = false;
 }
 
 function hideEventSheet() {
   sheetEl.classList.remove("open");
   sheetBackdrop.classList.remove("open");
-  autoRotate = true;
 }
 
 function setStatus(msg, isError = false) {
@@ -361,6 +357,9 @@ function initScene() {
   controls.rotateSpeed = 0.65;
   controls.zoomSpeed = 6.5;
   controls.enableZoom = true;
+  camera.up.set(0, 1, 0);
+  controls.minPolarAngle = POLE_LIMIT;
+  controls.maxPolarAngle = Math.PI - POLE_LIMIT;
 
   canvas.addEventListener("pointerdown", onPointerDown);
   sheetClose.addEventListener("click", hideEventSheet);
@@ -395,11 +394,6 @@ function resize() {
 
 function animate() {
   animationId = requestAnimationFrame(animate);
-  const delta = clock.getDelta();
-
-  if (autoRotate) {
-    earthGroup.rotation.y += AUTO_ROTATE_SPEED * delta;
-  }
 
   updateMoon();
   if (viewCenter === "moon") {
