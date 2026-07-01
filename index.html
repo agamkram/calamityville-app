@@ -11,7 +11,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta
     name="description"
-    content="Interactive 3D globe showing recent earthquakes, hurricanes, wildfires, and volcanic activity."
+    content="Interactive 3D globe showing recent earthquakes, tsunamis, tornadoes, hurricanes, floods, wildfires, and volcanic activity."
   />
   <title>Disaster Globe</title>
   <link rel="preconnect" href="https://earthquake.usgs.gov" crossorigin />
@@ -346,6 +346,20 @@
       margin-top: 0.25rem;
     }
 
+    #sheet-tsunami {
+      display: none;
+      font-size: 0.68rem;
+      font-weight: 600;
+      color: #22d3ee;
+      margin-top: 0.35rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    #sheet-tsunami.visible {
+      display: block;
+    }
+
     #sheet-desc {
       font-size: 0.85rem;
       line-height: 1.5;
@@ -394,7 +408,7 @@
             <h1>Disaster Globe</h1>
             <p>Recent events on Earth</p>
           </div>
-          <p id="status">Loading…</p>
+          <p id="status">Starting…</p>
         </header>
 
         <div class="time-toggle" role="group" aria-label="Time range">
@@ -422,6 +436,15 @@
           <button type="button" class="legend-item active" data-type="fire" aria-pressed="true">
             <span class="legend-dot" style="background:#ff9f43"></span>Wildfire
           </button>
+          <button type="button" class="legend-item active" data-type="flood" aria-pressed="true">
+            <span class="legend-dot" style="background:#38bdf8"></span>Flood
+          </button>
+          <button type="button" class="legend-item active" data-type="tornado" aria-pressed="true">
+            <span class="legend-dot" style="background:#e879f9"></span>Tornado
+          </button>
+          <button type="button" class="legend-item active" data-type="tsunami" aria-pressed="true">
+            <span class="legend-dot" style="background:#22d3ee"></span>Tsunami
+          </button>
         </div>
 
         <p id="event-count">0 events</p>
@@ -439,6 +462,7 @@
         <p id="sheet-type">Event</p>
         <h2 id="sheet-title">—</h2>
         <p id="sheet-time"></p>
+        <p id="sheet-tsunami">Tsunami advisory</p>
       </div>
       <button type="button" id="sheet-close" aria-label="Close">×</button>
     </div>

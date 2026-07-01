@@ -7,9 +7,6 @@ const MOON_VISUAL_DISTANCE = 4.5;
 const MOON_RADIUS = 0.26;
 const SUN_VISUAL_DISTANCE = 85;
 const SUN_RADIUS = 0.5;
-// Sun LOD (Solar System Scope photosphere, CC BY 4.0):
-//   low:  sun-2k.jpg (~800 KB) — always loaded
-//   high: sun-8k.jpg (~3.5 MB) — lazy on Sun center
 const SUN_LOD = {
   low: { map: "sun-2k.jpg", segments: 64 },
   high: { map: "sun-8k.jpg", segments: 96 },
@@ -35,46 +32,28 @@ const SUN_FRAGMENT_SHADER = `
   varying vec3 vViewPosition;
   void main() {
     vec3 viewDir = normalize(vViewPosition);
-    float limb = pow(max(dot(normalize(vNormal), viewDir), 0.0), 0.5);
+    float limb = pow(max(dot(normalize(vNormal), viewDir), 0.0), 0.55);
     vec3 surface = texture2D(sunMap, vUv).rgb;
-    vec3 core = surface * vec3(1.4, 1.2, 0.95);
-    vec3 edge = surface * vec3(0.7, 0.38, 0.1);
-    vec3 color = mix(edge, core, limb);
+    vec3 color = mix(surface * vec3(0.78, 0.44, 0.14), surface * vec3(1.32, 1.1, 0.88), limb);
     gl_FragColor = vec4(color, 1.0);
   }
 `;
-const PIN_ALTITUDE = 0.015;
-const PIN_RADIUS = 0.011;
+
+const PIN_ALTITUDE = 0.012;
+const PIN_RADIUS = 0.0065;
+const PIN_RADIUS_TSUNAMI = 0.0085;
+const PIN_TSUNAMI_HALO_SCALE = 1.35;
+const PIN_SEGMENTS = 16;
 const POLE_LIMIT = THREE.MathUtils.degToRad(12);
+const ZOOM_VIEW_DISTANCE = { earth: 3.2, moon: 0.85, sun: 2.5 };
+const ZOOM_SURFACE_CLEARANCE = 0.2;
+const ZOOM_MAX_DISTANCE = 168;
+const ZOOM_LIMITS = {
+  earth: { min: EARTH_RADIUS + ZOOM_SURFACE_CLEARANCE, max: ZOOM_MAX_DISTANCE },
+  moon: { min: MOON_RADIUS + ZOOM_SURFACE_CLEARANCE, max: ZOOM_MAX_DISTANCE },
+  sun: { min: SUN_RADIUS + ZOOM_SURFACE_CLEARANCE, max: ZOOM_MAX_DISTANCE },
+};
 
-const canvas = document.getElementById("globe-canvas");
-const loadingEl = document.getElementById("loading");
-const statusEl = document.getElementById("status");
-const countEl = document.getElementById("event-count");
-const sheetEl = document.getElementById("event-sheet");
-const sheetBackdrop = document.getElementById("sheet-backdrop");
-const sheetClose = document.getElementById("sheet-close");
-
-let scene, camera, renderer, controls;
-let earthGroup, earthMesh, moonGroup, moonMesh, moonEarthshine, sunGroup, sunMesh, sunLight, fillLight, pinsGroup;
-let moonLodLevel = "low";
-let moonHqPromise = null;
-let sunLodLevel = "low";
-let sunHqPromise = null;
-let pinMeshes = [];
-let allEvents = [];
-let currentHours = 24;
-let viewCenter = "earth";
-let animationId = null;
-
-const activeTypes = new Set(Object.keys(DISASTER_TYPES));
-const EARTH_TARGET = new THREE.Vector3(0, 0, 0);
-const _viewDir = new THREE.Vector3();
-const _toEarth = new THREE.Vector3();
-const _zAxis = new THREE.Vector3(0, 0, 1);
-// Moon LOD (Solar System Scope albedo, CC BY 4.0):
-//   low:  moon-2k.jpg + moon-normal-2k.jpg  (~2 MB) — always loaded
-//   high: moon-8k.jpg + moon-normal-4k.jpg  (~19 MB) — lazy on Moon center
 const MOON_LOD = {
   low: {
     map: "moon-2k.jpg",
@@ -90,11 +69,48 @@ const MOON_LOD = {
   },
 };
 
+const canvas = document.getElementById("globe-canvas");
+const loadingEl = document.getElementById("loading");
+const statusEl = document.getElementById("status");
+const countEl = document.getElementById("event-count");
+const sheetEl = document.getElementById("event-sheet");
+const sheetBackdrop = document.getElementById("sheet-backdrop");
+const sheetClose = document.getElementById("sheet-close");
+const sheetTypeEl = document.getElementById("sheet-type");
+const sheetTitleEl = document.getElementById("sheet-title");
+const sheetTimeEl = document.getElementById("sheet-time");
+const sheetDescEl = document.getElementById("sheet-desc");
+const sheetSourceEl = document.getElementById("sheet-source");
+const sheetLinkEl = document.getElementById("sheet-link");
+const sheetTsunamiEl = document.getElementById("sheet-tsunami");
+
+let subsolarObserver;
+let scene, camera, renderer, controls;
+let earthGroup, moonGroup, moonMesh, moonEarthshine, sunGroup, sunMesh, sunLight, fillLight, pinsGroup;
+let pinGeometry, pinGeometryTsunami, pinMaterials;
+let moonLodLevel = "low";
+let moonHqPromise = null;
+let sunLodLevel = "low";
+let sunHqPromise = null;
+let pinMeshes = [];
+let allEvents = [];
+let currentHours = 24;
+let viewCenter = "earth";
+let animationId = null;
+let refreshTimer = null;
+let eventsLoading = false;
+
+const EVENT_REFRESH_MS = 5 * 60 * 1000;
+
+const activeTypes = new Set(Object.keys(DISASTER_TYPES));
+const EARTH_TARGET = new THREE.Vector3(0, 0, 0);
+const _viewDir = new THREE.Vector3();
+const _toEarth = new THREE.Vector3();
+const _zAxis = new THREE.Vector3(0, 0, 1);
+
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
-
 const textureLoader = new THREE.TextureLoader();
-const STAR_MAP_URL = "stars-8k.jpg";
 
 function latLonToPosition(lat, lon, radius) {
   const phi = THREE.MathUtils.degToRad(90 - lat);
@@ -106,28 +122,30 @@ function latLonToPosition(lat, lon, radius) {
   );
 }
 
-function astronomyDirection(vec) {
-  return new THREE.Vector3(vec.x, vec.z, -vec.y).normalize();
+function subsolarPoint(time) {
+  if (!subsolarObserver) subsolarObserver = new Astronomy.Observer(0, 0, 0);
+  const eq = Astronomy.Equator(Astronomy.Body.Sun, time, subsolarObserver, true, true);
+  const gst = Astronomy.SiderealTime(time);
+  let lon = (eq.ra - gst) * 15;
+  while (lon <= -180) lon += 360;
+  while (lon > 180) lon -= 360;
+  return { latitude: eq.dec, longitude: lon };
 }
 
-function astronomyToScene(vec, distance) {
-  return astronomyDirection(vec).multiplyScalar(distance);
+function geoVectorToScene(vec, distance) {
+  const obs = Astronomy.VectorObserver(vec, false);
+  return latLonToPosition(obs.latitude, obs.longitude, distance);
 }
 
-function astroTime() {
-  return new Astronomy.AstroTime(new Date());
-}
-
-function updateSun() {
-  const vec = Astronomy.GeoVector(Astronomy.Body.Sun, astroTime(), false);
-  sunGroup.position.copy(astronomyToScene(vec, SUN_VISUAL_DISTANCE));
+function updateCelestialBodies(time) {
+  const subsolar = subsolarPoint(time);
+  const sunDir = latLonToPosition(subsolar.latitude, subsolar.longitude, 1);
+  sunGroup.position.copy(sunDir).multiplyScalar(SUN_VISUAL_DISTANCE);
   sunLight.position.copy(sunGroup.position);
   if (fillLight) fillLight.position.copy(sunGroup.position).negate();
-}
 
-function updateMoon() {
-  const vec = Astronomy.GeoVector(Astronomy.Body.Moon, astroTime(), false);
-  moonGroup.position.copy(astronomyToScene(vec, MOON_VISUAL_DISTANCE));
+  const moonVec = Astronomy.GeoVector(Astronomy.Body.Moon, time, false);
+  moonGroup.position.copy(geoVectorToScene(moonVec, MOON_VISUAL_DISTANCE));
 
   _toEarth.copy(moonGroup.position).negate().normalize();
   moonGroup.quaternion.setFromUnitVectors(_zAxis, _toEarth);
@@ -137,15 +155,29 @@ function updateMoon() {
   }
 }
 
-/** Start with Earth and Moon both in frame — camera opposite the Moon. */
 function aimCameraForMoon() {
-  updateSun();
-  updateMoon();
+  updateCelestialBodies(new Astronomy.AstroTime(new Date()));
   const moonDir = moonGroup.position.clone().normalize();
-  const camDist = 3.2;
-  camera.position.copy(moonDir.multiplyScalar(-camDist));
+  camera.position.copy(moonDir.multiplyScalar(-ZOOM_VIEW_DISTANCE.earth));
   camera.position.y += 0.35;
   camera.lookAt(EARTH_TARGET);
+}
+
+function applyZoomLimits(center) {
+  const limits = ZOOM_LIMITS[center] || ZOOM_LIMITS.earth;
+  controls.minDistance = limits.min;
+  controls.maxDistance = limits.max;
+}
+
+function clampCameraDistance() {
+  if (!controls || !camera) return;
+  const limits = ZOOM_LIMITS[viewCenter] || ZOOM_LIMITS.earth;
+  _viewDir.copy(camera.position).sub(controls.target);
+  const dist = _viewDir.length();
+  if (dist < limits.min || dist > limits.max) {
+    _viewDir.normalize().multiplyScalar(THREE.MathUtils.clamp(dist, limits.min, limits.max));
+    camera.position.copy(controls.target).add(_viewDir);
+  }
 }
 
 function setViewCenter(center) {
@@ -154,29 +186,29 @@ function setViewCenter(center) {
     btn.classList.toggle("active", btn.dataset.center === center);
   });
 
+  applyZoomLimits(center);
+
   if (center === "moon") {
     controls.target.copy(moonGroup.position);
-    controls.minDistance = 0.4;
-    controls.maxDistance = 2.2;
     _viewDir.copy(camera.position).sub(controls.target);
-    if (_viewDir.length() < 0.5) _viewDir.set(0.1, 0.15, 1);
-    _viewDir.normalize().multiplyScalar(0.85);
+    if (_viewDir.length() < ZOOM_LIMITS.moon.min) _viewDir.set(0.1, 0.15, 1);
+    _viewDir.normalize().multiplyScalar(ZOOM_VIEW_DISTANCE.moon);
     camera.position.copy(moonGroup.position).add(_viewDir);
     upgradeMoonTextures();
   } else if (center === "sun") {
     controls.target.copy(sunGroup.position);
-    controls.minDistance = 0.35;
-    controls.maxDistance = 5;
-    _viewDir.copy(EARTH_TARGET).sub(sunGroup.position).normalize();
-    camera.position.copy(sunGroup.position).add(_viewDir.multiplyScalar(2.5));
+    _viewDir.copy(camera.position).sub(controls.target);
+    if (_viewDir.length() < ZOOM_LIMITS.sun.min) {
+      _viewDir.copy(EARTH_TARGET).sub(sunGroup.position);
+    }
+    _viewDir.normalize().multiplyScalar(ZOOM_VIEW_DISTANCE.sun);
+    camera.position.copy(sunGroup.position).add(_viewDir);
     upgradeSunTextures();
   } else {
     controls.target.copy(EARTH_TARGET);
-    controls.minDistance = 1.5;
-    controls.maxDistance = 14;
     _viewDir.copy(camera.position).sub(controls.target);
-    if (_viewDir.length() < 1) _viewDir.set(0, 0.12, 1);
-    _viewDir.normalize().multiplyScalar(3.2);
+    if (_viewDir.length() < ZOOM_LIMITS.earth.min) _viewDir.set(0, 0.12, 1);
+    _viewDir.normalize().multiplyScalar(ZOOM_VIEW_DISTANCE.earth);
     camera.position.copy(EARTH_TARGET).add(_viewDir);
   }
   controls.update();
@@ -193,9 +225,27 @@ function configureSkyTexture(tex) {
   }
 }
 
-/** 8K Tycho + Milky Way equirectangular sky (CC BY 4.0 Solar System Scope). */
+function configureColorTexture(tex) {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  if (renderer) {
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  }
+}
+
+function configureNormalTexture(tex) {
+  if (renderer) {
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  }
+}
+
+function loadTexture(url) {
+  return new Promise((resolve, reject) => {
+    textureLoader.load(url, resolve, undefined, reject);
+  });
+}
+
 function loadStarBackground() {
-  textureLoader.load(STAR_MAP_URL, (tex) => {
+  textureLoader.load("stars-8k.jpg", (tex) => {
     configureSkyTexture(tex);
     scene.background = tex;
   });
@@ -205,7 +255,6 @@ function createEarth() {
   earthGroup = new THREE.Group();
   scene.add(earthGroup);
 
-  const geo = new THREE.SphereGeometry(EARTH_RADIUS, 64, 64);
   const earthTex = textureLoader.load(
     "https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
   );
@@ -230,8 +279,7 @@ function createEarth() {
   });
   mat.color.multiplyScalar(1.25);
 
-  earthMesh = new THREE.Mesh(geo, mat);
-  earthGroup.add(earthMesh);
+  earthGroup.add(new THREE.Mesh(new THREE.SphereGeometry(EARTH_RADIUS, 64, 64), mat));
 
   pinsGroup = new THREE.Group();
   earthGroup.add(pinsGroup);
@@ -244,21 +292,27 @@ function createEarth() {
     side: THREE.BackSide,
   });
   earthGroup.add(new THREE.Mesh(atmosGeo, atmosMat));
+
+  if (sunLight) {
+    sunLight.target = earthGroup;
+    scene.add(sunLight.target);
+  }
 }
 
-function configureMoonColorTexture(tex) {
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-}
-
-function configureMoonNormalTexture(tex) {
-  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-}
-
-function loadMoonTexture(url) {
-  return new Promise((resolve, reject) => {
-    textureLoader.load(url, resolve, undefined, reject);
-  });
+function initPinAssets() {
+  pinGeometry = new THREE.SphereGeometry(PIN_RADIUS, PIN_SEGMENTS, PIN_SEGMENTS);
+  pinGeometryTsunami = new THREE.SphereGeometry(PIN_RADIUS_TSUNAMI, PIN_SEGMENTS, PIN_SEGMENTS);
+  pinMaterials = {
+    _default: new THREE.MeshBasicMaterial({ color: "#ffffff" }),
+    _tsunamiHalo: new THREE.MeshBasicMaterial({
+      color: "#22d3ee",
+      transparent: true,
+      opacity: 0.5,
+    }),
+  };
+  for (const [type, info] of Object.entries(DISASTER_TYPES)) {
+    pinMaterials[type] = new THREE.MeshBasicMaterial({ color: info.color });
+  }
 }
 
 function applyMoonLod(lod) {
@@ -277,15 +331,12 @@ async function upgradeMoonTextures() {
   if (moonLodLevel === "high") return;
   if (!moonHqPromise) {
     const cfg = MOON_LOD.high;
-    moonHqPromise = Promise.all([
-      loadMoonTexture(cfg.map),
-      loadMoonTexture(cfg.normal),
-    ]);
+    moonHqPromise = Promise.all([loadTexture(cfg.map), loadTexture(cfg.normal)]);
   }
   try {
     const [map, normal] = await moonHqPromise;
-    configureMoonColorTexture(map);
-    configureMoonNormalTexture(normal);
+    configureColorTexture(map);
+    configureNormalTexture(normal);
 
     const mat = moonMesh.material;
     mat.map?.dispose();
@@ -300,13 +351,8 @@ async function upgradeMoonTextures() {
   }
 }
 
-function configureSunTexture(tex) {
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-}
-
 function createSunMaterial(tex) {
-  configureSunTexture(tex);
+  configureColorTexture(tex);
   return new THREE.ShaderMaterial({
     uniforms: { sunMap: { value: tex } },
     vertexShader: SUN_VERTEX_SHADER,
@@ -327,11 +373,11 @@ function applySunLod(lod) {
 async function upgradeSunTextures() {
   if (sunLodLevel === "high") return;
   if (!sunHqPromise) {
-    sunHqPromise = loadMoonTexture(SUN_LOD.high.map);
+    sunHqPromise = loadTexture(SUN_LOD.high.map);
   }
   try {
     const tex = await sunHqPromise;
-    configureSunTexture(tex);
+    configureColorTexture(tex);
     sunMesh.material.uniforms.sunMap.value = tex;
     applySunLod("high");
   } catch (err) {
@@ -345,15 +391,12 @@ function createSun() {
   scene.add(sunGroup);
 
   const cfg = SUN_LOD.low;
-  const tex = textureLoader.load(cfg.map, configureSunTexture);
-  configureSunTexture(tex);
-
+  const tex = textureLoader.load(cfg.map, configureColorTexture);
   sunMesh = new THREE.Mesh(
     new THREE.SphereGeometry(SUN_RADIUS, cfg.segments, cfg.segments),
     createSunMaterial(tex)
   );
   sunGroup.add(sunMesh);
-  updateSun();
 }
 
 function createMoon() {
@@ -361,13 +404,8 @@ function createMoon() {
   scene.add(moonGroup);
 
   const cfg = MOON_LOD.low;
-  const geo = new THREE.SphereGeometry(MOON_RADIUS, cfg.segments, cfg.segments);
-
-  const tex = textureLoader.load(cfg.map, configureMoonColorTexture);
-  configureMoonColorTexture(tex);
-
-  const normal = textureLoader.load(cfg.normal, configureMoonNormalTexture);
-  configureMoonNormalTexture(normal);
+  const tex = textureLoader.load(cfg.map, configureColorTexture);
+  const normal = textureLoader.load(cfg.normal, configureNormalTexture);
 
   const mat = new THREE.MeshStandardMaterial({
     map: tex,
@@ -380,18 +418,20 @@ function createMoon() {
   });
   mat.color.multiplyScalar(1.08);
 
-  moonMesh = new THREE.Mesh(geo, mat);
+  moonMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(MOON_RADIUS, cfg.segments, cfg.segments),
+    mat
+  );
   moonMesh.rotation.y = Math.PI;
   moonGroup.add(moonMesh);
-  updateMoon();
 }
 
 function createLights() {
-  scene.add(new THREE.HemisphereLight(0xd0e0f8, 0x7a8a9e, 2.2));
-  scene.add(new THREE.AmbientLight(0x99aabb, 1.2));
-  sunLight = new THREE.DirectionalLight(0xfff8f0, 1.55);
+  scene.add(new THREE.HemisphereLight(0xd0e0f8, 0x7a8a9e, 2.0));
+  scene.add(new THREE.AmbientLight(0x99aabb, 1.0));
+  sunLight = new THREE.DirectionalLight(0xfff4e8, 1.75);
   scene.add(sunLight);
-  fillLight = new THREE.DirectionalLight(0xbbccdd, 1.4);
+  fillLight = new THREE.DirectionalLight(0x8a9ab8, 0.75);
   scene.add(fillLight);
   moonEarthshine = new THREE.DirectionalLight(0xb0c0d8, 0.75);
   scene.add(moonEarthshine);
@@ -400,24 +440,29 @@ function createLights() {
 function clearPins() {
   for (const pin of pinMeshes) {
     pinsGroup.remove(pin);
-    pin.geometry?.dispose();
-    pin.material?.dispose();
   }
   pinMeshes = [];
 }
 
 function createPin(event) {
-  const typeInfo = DISASTER_TYPES[event.type] || { color: "#ffffff" };
+  const mat = pinMaterials[event.type] || pinMaterials._default;
   const pos = latLonToPosition(event.lat, event.lon, EARTH_RADIUS + PIN_ALTITUDE);
+  const root = new THREE.Group();
+  root.position.copy(pos);
+  root.userData.event = event;
 
-  const geo = new THREE.SphereGeometry(PIN_RADIUS, 10, 10);
-  const mat = new THREE.MeshBasicMaterial({ color: typeInfo.color });
-  const pin = new THREE.Mesh(geo, mat);
-  pin.position.copy(pos);
-  pin.userData.event = event;
+  const tsunamiPin = event.type === "tsunami" || event.tsunami;
+  const geo = tsunamiPin ? pinGeometryTsunami : pinGeometry;
+  root.add(new THREE.Mesh(geo, mat));
 
-  pinsGroup.add(pin);
-  pinMeshes.push(pin);
+  if (tsunamiPin) {
+    const halo = new THREE.Mesh(pinGeometryTsunami, pinMaterials._tsunamiHalo);
+    halo.scale.setScalar(PIN_TSUNAMI_HALO_SCALE);
+    root.add(halo);
+  }
+
+  pinsGroup.add(root);
+  pinMeshes.push(root);
 }
 
 function updateEventCount(visible, total) {
@@ -459,24 +504,32 @@ function toggleLegendType(type) {
 
 function showEventSheet(event) {
   const typeInfo = DISASTER_TYPES[event.type] || { label: "Event", color: "#fff" };
-  document.getElementById("sheet-type").textContent = typeInfo.label;
-  document.getElementById("sheet-type").style.color = typeInfo.color;
-  document.getElementById("sheet-title").textContent = event.title;
-  document.getElementById("sheet-time").textContent = formatEventTime(event.time);
-  document.getElementById("sheet-desc").textContent = event.description || "";
-  document.getElementById("sheet-source").textContent = event.source || "";
-  const link = document.getElementById("sheet-link");
+  sheetTypeEl.textContent = typeInfo.label;
+  sheetTypeEl.style.color = typeInfo.color;
+  sheetTitleEl.textContent = event.title;
+  sheetTimeEl.textContent = formatEventTime(event.time);
+  const showTsunamiBadge = event.type === "tsunami" || Boolean(event.tsunami);
+  sheetTsunamiEl?.classList.toggle("visible", showTsunamiBadge);
+  if (sheetTsunamiEl && showTsunamiBadge) {
+    sheetTsunamiEl.textContent = event.alertLevel || (event.type === "tsunami" ? "Tsunami alert" : "Tsunami advisory");
+  }
+  sheetDescEl.textContent = event.description || "";
+  if (event.tsunami && event.type === "earthquake") {
+    sheetDescEl.textContent = `Tsunami advisory issued for this earthquake. ${event.description || ""}`.trim();
+  }
+  sheetSourceEl.textContent = event.source || "";
   if (event.url) {
-    link.href = event.url;
-    link.style.display = "";
+    sheetLinkEl.href = event.url;
+    sheetLinkEl.style.display = "";
   } else {
-    link.style.display = "none";
+    sheetLinkEl.style.display = "none";
   }
   sheetEl.classList.add("open");
   sheetBackdrop.classList.add("open");
 }
 
 function hideEventSheet() {
+  sheetTsunamiEl?.classList.remove("visible");
   sheetEl.classList.remove("open");
   sheetBackdrop.classList.remove("open");
 }
@@ -486,10 +539,14 @@ function setStatus(msg, isError = false) {
   statusEl.classList.toggle("error", isError);
 }
 
-async function loadEvents(hours) {
+async function loadEvents(hours, { background = false } = {}) {
+  if (eventsLoading) return;
+  eventsLoading = true;
   currentHours = hours;
-  loadingEl.classList.add("visible");
-  setStatus("Loading events…");
+  if (!background) {
+    loadingEl?.classList.add("visible");
+    setStatus("Loading events…");
+  }
   try {
     const { events, errors } = await fetchDisasters(hours);
     setPins(events);
@@ -499,11 +556,25 @@ async function loadEvents(hours) {
       setStatus(`Past ${hours} hours`);
     }
   } catch (err) {
-    setStatus("Failed to load events", true);
+    if (!background) setStatus("Failed to load events", true);
     console.error(err);
   } finally {
-    loadingEl.classList.remove("visible");
+    if (!background) loadingEl?.classList.remove("visible");
+    eventsLoading = false;
   }
+}
+
+function startEventRefresh() {
+  stopEventRefresh();
+  refreshTimer = setInterval(() => {
+    loadEvents(currentHours, { background: true });
+  }, EVENT_REFRESH_MS);
+}
+
+function stopEventRefresh() {
+  if (!refreshTimer) return;
+  clearInterval(refreshTimer);
+  refreshTimer = null;
 }
 
 function onPointerDown(event) {
@@ -511,9 +582,11 @@ function onPointerDown(event) {
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
-  const hits = raycaster.intersectObjects(pinMeshes, false);
-  if (hits.length > 0 && hits[0].object.userData.event) {
-    showEventSheet(hits[0].object.userData.event);
+  const hits = raycaster.intersectObjects(pinMeshes, true);
+  const hit = hits.find((h) => h.object.userData.event || h.object.parent?.userData.event);
+  const pinEvent = hit?.object.userData.event || hit?.object.parent?.userData.event;
+  if (pinEvent) {
+    showEventSheet(pinEvent);
     event.preventDefault();
   }
 }
@@ -521,7 +594,7 @@ function onPointerDown(event) {
 function initScene() {
   scene = new THREE.Scene();
 
-  camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
+  camera = new THREE.PerspectiveCamera(45, 1, 0.1, 500);
   camera.position.set(0, 0.4, 3.2);
 
   renderer = new THREE.WebGLRenderer({
@@ -535,6 +608,7 @@ function initScene() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMappingExposure = 1.2;
 
+  initPinAssets();
   loadStarBackground();
 
   createLights();
@@ -546,11 +620,10 @@ function initScene() {
   controls = new OrbitControls(camera, canvas);
   controls.target.copy(EARTH_TARGET);
   controls.enablePan = false;
-  controls.minDistance = 1.5;
-  controls.maxDistance = 14;
+  applyZoomLimits("earth");
   controls.enableDamping = false;
   controls.rotateSpeed = 0.65;
-  controls.zoomSpeed = 6.5;
+  controls.zoomSpeed = 54;
   controls.enableZoom = true;
   camera.up.set(0, 1, 0);
   controls.minPolarAngle = POLE_LIMIT;
@@ -590,27 +663,50 @@ function resize() {
 function animate() {
   animationId = requestAnimationFrame(animate);
 
-  updateSun();
-  updateMoon();
+  updateCelestialBodies(new Astronomy.AstroTime(new Date()));
+
   if (viewCenter === "moon") {
     controls.target.copy(moonGroup.position);
   } else if (viewCenter === "sun") {
     controls.target.copy(sunGroup.position);
   }
+
   controls.update();
+  clampCameraDistance();
   renderer.render(scene, camera);
 }
 
 export function bootGlobe() {
-  initScene();
-  resize();
-  animate();
+  try {
+    initScene();
+    resize();
+    animate();
+  } catch (err) {
+    console.error("Globe init failed:", err);
+    setStatus("Globe failed to start", true);
+    loadingEl.classList.remove("visible");
+  }
   loadEvents(currentHours);
+  startEventRefresh();
   return { resize };
 }
 
 export function destroyGlobe() {
+  stopEventRefresh();
   if (animationId) cancelAnimationFrame(animationId);
+  animationId = null;
+
+  canvas.removeEventListener("pointerdown", onPointerDown);
+  sheetClose.removeEventListener("click", hideEventSheet);
+  sheetBackdrop.removeEventListener("click", hideEventSheet);
+
+  clearPins();
+  pinGeometry?.dispose();
+  pinGeometryTsunami?.dispose();
+  if (pinMaterials) {
+    for (const mat of Object.values(pinMaterials)) mat.dispose();
+  }
+
   controls?.dispose();
   renderer?.dispose();
 }
