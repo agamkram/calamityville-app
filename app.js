@@ -55,7 +55,7 @@ const ZOOM_LIMITS = {
 };
 /** Wheel uses normalized deltas; pinch uses Math.pow(ratio, zoomSpeed) — needs a far lower value. */
 const WHEEL_ZOOM_SPEED = 54;
-const TOUCH_ZOOM_SPEED = 1.6;
+const TOUCH_ZOOM_SPEED = 2.5;
 
 const MOON_LOD = {
   low: {
@@ -172,9 +172,15 @@ function applyZoomLimits(center) {
   controls.maxDistance = limits.max;
 }
 
+function isCoarsePointer() {
+  return window.matchMedia("(pointer: coarse)").matches;
+}
+
 function applyZoomSpeed(pointerType) {
   if (!controls) return;
-  controls.zoomSpeed = pointerType === "touch" ? TOUCH_ZOOM_SPEED : WHEEL_ZOOM_SPEED;
+  const touchLike =
+    pointerType === "touch" || (isCoarsePointer() && pointerType !== "mouse");
+  controls.zoomSpeed = touchLike ? TOUCH_ZOOM_SPEED : WHEEL_ZOOM_SPEED;
 }
 
 function clampCameraDistance() {
@@ -633,8 +639,7 @@ function initScene() {
   controls.rotateSpeed = 0.65;
   controls.zoomSpeed = WHEEL_ZOOM_SPEED;
   controls.enableZoom = true;
-  controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY };
-  applyZoomSpeed("wheel");
+  applyZoomSpeed(isCoarsePointer() ? "touch" : "wheel");
   canvas.addEventListener("wheel", () => applyZoomSpeed("wheel"), { passive: true });
   canvas.addEventListener("pointerdown", (e) => applyZoomSpeed(e.pointerType), { capture: true });
   camera.up.set(0, 1, 0);
