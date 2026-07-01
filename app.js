@@ -7,7 +7,6 @@ const MOON_VISUAL_DISTANCE = 4.5;
 const MOON_RADIUS = 0.26;
 const PIN_ALTITUDE = 0.015;
 const PIN_RADIUS = 0.011;
-const PIN_GLOW_RADIUS = 0.018;
 const AUTO_ROTATE_SPEED = 0.08;
 
 const canvas = document.getElementById("globe-canvas");
@@ -62,30 +61,19 @@ function aimCameraForMoon() {
   camera.lookAt(0, 0, 0);
 }
 
+/** Real all-sky star map (Tycho catalog + Milky Way), CC BY 4.0 Solar System Scope. */
 function createStarfield() {
-  const count = 4000;
-  const positions = new Float32Array(count * 3);
-  const radius = 80;
-  for (let i = 0; i < count; i++) {
-    const u = Math.random();
-    const v = Math.random();
-    const theta = 2 * Math.PI * u;
-    const phi = Math.acos(2 * v - 1);
-    const r = radius * (0.85 + Math.random() * 0.15);
-    positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-    positions[i * 3 + 1] = r * Math.cos(phi);
-    positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  const mat = new THREE.PointsMaterial({
-    color: 0xffffff,
-    size: 0.35,
-    sizeAttenuation: true,
-    transparent: true,
-    opacity: 0.85,
+  const tex = textureLoader.load("stars-milky-way.jpg");
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const geo = new THREE.SphereGeometry(120, 64, 32);
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex,
+    side: THREE.BackSide,
+    depthWrite: false,
   });
-  return new THREE.Points(geo, mat);
+  const sky = new THREE.Mesh(geo, mat);
+  sky.renderOrder = -1;
+  return sky;
 }
 
 function createEarth() {
@@ -143,15 +131,6 @@ function createMoon() {
     shininess: 4,
   });
   moonMesh = new THREE.Mesh(geo, mat);
-
-  const haloGeo = new THREE.SphereGeometry(MOON_RADIUS * 1.35, 16, 16);
-  const haloMat = new THREE.MeshBasicMaterial({
-    color: 0xc8d0e8,
-    transparent: true,
-    opacity: 0.12,
-  });
-  moonMesh.add(new THREE.Mesh(haloGeo, haloMat));
-
   scene.add(moonMesh);
   updateMoon();
 }
@@ -185,15 +164,6 @@ function createPin(event) {
   const pin = new THREE.Mesh(geo, mat);
   pin.position.copy(pos);
   pin.userData.event = event;
-
-  const glowGeo = new THREE.SphereGeometry(PIN_GLOW_RADIUS, 10, 10);
-  const glowMat = new THREE.MeshBasicMaterial({
-    color: typeInfo.color,
-    transparent: true,
-    opacity: 0.35,
-  });
-  const glow = new THREE.Mesh(glowGeo, glowMat);
-  pin.add(glow);
 
   pinsGroup.add(pin);
   pinMeshes.push(pin);
@@ -298,10 +268,9 @@ function initScene() {
   controls.enablePan = false;
   controls.minDistance = 1.5;
   controls.maxDistance = 14;
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.05;
+  controls.enableDamping = false;
   controls.rotateSpeed = 0.65;
-  controls.zoomSpeed = 3.5;
+  controls.zoomSpeed = 6.5;
   controls.enableZoom = true;
 
   canvas.addEventListener("pointerdown", onPointerDown);
