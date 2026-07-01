@@ -103,12 +103,13 @@ function createEarth() {
     map: earthTex,
     emissiveMap: nightTex,
     emissive: new THREE.Color(0xffeedd),
-    emissiveIntensity: 0.9,
+    emissiveIntensity: 1.2,
     bumpMap: bumpTex,
     bumpScale: 0.04,
-    specular: new THREE.Color(0x333333),
-    shininess: 6,
+    specular: new THREE.Color(0x444444),
+    shininess: 5,
   });
+  mat.color.multiplyScalar(1.25);
 
   earthMesh = new THREE.Mesh(geo, mat);
   earthGroup.add(earthMesh);
@@ -142,15 +143,15 @@ function createMoon() {
 }
 
 function createLights() {
-  scene.add(new THREE.HemisphereLight(0xb8c8e8, 0x4a5a6e, 1.45));
-  scene.add(new THREE.AmbientLight(0x667788, 0.8));
-  const sun = new THREE.DirectionalLight(0xfff8f0, 1.15);
+  scene.add(new THREE.HemisphereLight(0xd0e0f8, 0x7a8a9e, 2.2));
+  scene.add(new THREE.AmbientLight(0x99aabb, 1.2));
+  const sun = new THREE.DirectionalLight(0xfff8f0, 1.55);
   sun.position.set(5, 2, 3);
   scene.add(sun);
-  const fill = new THREE.DirectionalLight(0x99aacc, 1.05);
+  const fill = new THREE.DirectionalLight(0xbbccdd, 1.4);
   fill.position.set(-5, 1, -4);
   scene.add(fill);
-  moonFill = new THREE.DirectionalLight(0x8899bb, 0.4);
+  moonFill = new THREE.DirectionalLight(0xaabbcc, 0.65);
   scene.add(moonFill);
 }
 
@@ -263,6 +264,7 @@ function initScene() {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setClearColor(0x020308);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMappingExposure = 1.2;
 
   loadStarBackground();
 
