@@ -26,6 +26,10 @@
       capScaleAtOne = true,
       shouldFit = () => true,
       getTopBuffer,
+      getAppLayoutWidth,
+      getCapScaleAtOne,
+      getLayoutName,
+      useScaleForLayout,
       onFit = () => {},
     } = options || {};
 
@@ -55,7 +59,17 @@
       return availW <= phoneMaxWidth;
     }
 
-    function appLayoutWidth(availW) {
+    function layoutFor(availW, availH) {
+      if (getLayoutName) return getLayoutName(availW, availH);
+      return isPhoneLayout(availW) ? "phone" : "wide";
+    }
+
+    function appLayoutWidth(availW, availH) {
+      const layout = layoutFor(availW, availH);
+      if (getAppLayoutWidth) {
+        const custom = getAppLayoutWidth(availW, layout, availH);
+        if (custom != null) return custom;
+      }
       return isPhoneLayout(availW) ? availW : wideAppWidth;
     }
 
@@ -81,6 +95,31 @@
       return stage.clientHeight === fitAvailH && stage.clientWidth === fitAvailW;
     }
 
+    function shouldScaleLayout(layout, availW, availH) {
+      if (typeof useScaleForLayout === "function") {
+        return useScaleForLayout(layout, availW, availH);
+      }
+      return isPhoneLayout(availW);
+    }
+
+    function applyFluidLayout(layout) {
+      stage.classList.add("fit-stage--fluid");
+      app.dataset.layout = layout;
+      app.style.width = "";
+      app.style.maxWidth = "";
+      app.style.transform = "none";
+      fitLayout = layout;
+      fitAvailH = stage.clientHeight;
+      fitAvailW = stage.clientWidth;
+      appliedScale = 1;
+      if (!app.classList.contains("is-fitted")) {
+        layoutShownAt = performance.now();
+      }
+      app.classList.add("is-fitted");
+      layoutReady = true;
+      onFit({ scale: 1, layout, availH: fitAvailH, availW: fitAvailW, fluid: true });
+    }
+
     function fitToScreen(remasure = false) {
       if (!ensureElements() || !shouldFit()) return;
 
@@ -89,10 +128,26 @@
       const availH = stage.clientHeight;
       const availW = stage.clientWidth;
       const viewportChanged = availH !== fitAvailH || availW !== fitAvailW;
-      const layout = isPhoneLayout(availW) ? "phone" : "wide";
+      const layout = layoutFor(availW, availH);
       const layoutChanged = layout !== fitLayout;
 
-      app.style.width = `${appLayoutWidth(availW)}px`;
+      if (!shouldScaleLayout(layout, availW, availH)) {
+        if (
+          layoutReady &&
+          app.classList.contains("is-fitted") &&
+          layout === fitLayout &&
+          stage.classList.contains("fit-stage--fluid") &&
+          !viewportChanged &&
+          !remasure
+        ) {
+          return;
+        }
+        applyFluidLayout(layout);
+        return;
+      }
+
+      stage.classList.remove("fit-stage--fluid");
+      app.style.width = `${appLayoutWidth(availW, availH)}px`;
       app.dataset.layout = layout;
 
       if (remasure || viewportChanged || layoutChanged || !fitNaturalH) {
@@ -113,7 +168,10 @@
         (availH - buffer) / fitNaturalH,
         availW / fitNaturalW
       );
-      if (capScaleAtOne) scale = Math.min(scale, 1);
+      const capAtOne = getCapScaleAtOne
+        ? getCapScaleAtOne(layout, availW, availH)
+        : capScaleAtOne;
+      if (capAtOne) scale = Math.min(scale, 1);
 
       if (
         layoutReady &&
@@ -202,11 +260,12 @@
       scheduleFitToScreen(true);
     }
 
-    function bindViewportListeners() {
+    function bindViewportListeners(options = {}) {
       if (listenersBound) return;
       listenersBound = true;
+      const bindOrientation = options.bindOrientation !== false;
       root.addEventListener("resize", onViewportResize);
-      root.addEventListener("orientationchange", onOrientationChange);
+      if (bindOrientation) root.addEventListener("orientationchange", onOrientationChange);
       root.visualViewport?.addEventListener("resize", onViewportResize);
     }
 

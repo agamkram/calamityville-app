@@ -281,9 +281,9 @@ function initScene() {
 }
 
 function resize() {
-  const stage = document.getElementById("fit-stage");
-  const w = stage.clientWidth;
-  const h = stage.clientHeight;
+  const app = document.getElementById("app");
+  const w = app?.clientWidth || document.getElementById("fit-stage")?.clientWidth;
+  const h = app?.clientHeight || document.getElementById("fit-stage")?.clientHeight;
   if (!w || !h) return;
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
