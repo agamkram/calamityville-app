@@ -11,7 +11,7 @@ export const DISASTER_TYPES = {
   hurricane: { label: "Hurricane", color: "#0a84ff" },
   fire: { label: "Wildfire", color: "#ff2d55" },
   flood: { label: "Flood", color: "#30d158" },
-  tornado: { label: "Tornado", color: "#ffd60a" },
+  tornado: { label: "Tornado", color: "#d1d5db" },
   tsunami: { label: "Tsunami", color: "#5ac8fa" },
 };
 
