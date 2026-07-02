@@ -6,10 +6,10 @@
 const EARTHQUAKE_MIN_MAGNITUDE = 2.5;
 
 export const DISASTER_TYPES = {
-  earthquake: { label: "Earthquake", color: "#ff2d55" },
+  earthquake: { label: "Earthquake", color: "#ff9f0a" },
   volcano: { label: "Volcano", color: "#bf5af2" },
   hurricane: { label: "Hurricane", color: "#0a84ff" },
-  fire: { label: "Wildfire", color: "#ff9f0a" },
+  fire: { label: "Wildfire", color: "#ff2d55" },
   flood: { label: "Flood", color: "#30d158" },
   tornado: { label: "Tornado", color: "#ffd60a" },
   tsunami: { label: "Tsunami", color: "#5ac8fa" },
