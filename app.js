@@ -326,18 +326,18 @@ function createTornadoSwirlTexture(size = 128) {
   const cx = size / 2;
   const cy = size / 2;
 
-  ctx.fillStyle = "#b8bcc6";
+  ctx.fillStyle = "#f8fafc";
   ctx.fillRect(0, 0, size, size);
 
-  const arms = 3;
-  const turns = 2.4;
-  const maxR = size * 0.47;
-  const steps = 220;
+  const arms = 2;
+  const turns = 1.8;
+  const maxR = size * 0.46;
+  const steps = 180;
 
   for (let arm = 0; arm < arms; arm += 1) {
     const phase = (arm / arms) * Math.PI * 2;
-    ctx.strokeStyle = arm % 2 === 0 ? "#111116" : "#5b616d";
-    ctx.lineWidth = size * 0.085;
+    ctx.strokeStyle = "rgba(226, 232, 240, 0.95)";
+    ctx.lineWidth = size * 0.07;
     ctx.lineCap = "round";
     ctx.beginPath();
     for (let i = 0; i <= steps; i += 1) {
@@ -352,13 +352,9 @@ function createTornadoSwirlTexture(size = 128) {
     ctx.stroke();
   }
 
-  const eye = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 0.14);
-  eye.addColorStop(0, "#050508");
-  eye.addColorStop(0.55, "#2a2a32");
-  eye.addColorStop(1, "rgba(42, 42, 50, 0)");
-  ctx.fillStyle = eye;
+  ctx.fillStyle = "#ff2d55";
   ctx.beginPath();
-  ctx.arc(cx, cy, size * 0.14, 0, Math.PI * 2);
+  ctx.arc(cx, cy, size * 0.09, 0, Math.PI * 2);
   ctx.fill();
 
   const texture = new THREE.CanvasTexture(canvas);
