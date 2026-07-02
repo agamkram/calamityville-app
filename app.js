@@ -324,7 +324,7 @@ function initPinAssets() {
   pinMaterials = {
     _default: new THREE.MeshBasicMaterial({ color: "#ffffff" }),
     _tsunamiHalo: new THREE.MeshBasicMaterial({
-      color: "#22d3ee",
+      color: DISASTER_TYPES.tsunami.color,
       transparent: true,
       opacity: 0.5,
     }),

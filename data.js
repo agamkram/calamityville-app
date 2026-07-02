@@ -6,13 +6,13 @@
 const EARTHQUAKE_MIN_MAGNITUDE = 2.5;
 
 export const DISASTER_TYPES = {
-  earthquake: { label: "Earthquake", color: "#ff6b4a" },
-  volcano: { label: "Volcano", color: "#e056fd" },
-  hurricane: { label: "Hurricane", color: "#4a9eff" },
-  fire: { label: "Wildfire", color: "#ff9f43" },
-  flood: { label: "Flood", color: "#38bdf8" },
-  tornado: { label: "Tornado", color: "#e879f9" },
-  tsunami: { label: "Tsunami", color: "#22d3ee" },
+  earthquake: { label: "Earthquake", color: "#ff2d55" },
+  volcano: { label: "Volcano", color: "#bf5af2" },
+  hurricane: { label: "Hurricane", color: "#0a84ff" },
+  fire: { label: "Wildfire", color: "#ff9f0a" },
+  flood: { label: "Flood", color: "#30d158" },
+  tornado: { label: "Tornado", color: "#ffd60a" },
+  tsunami: { label: "Tsunami", color: "#5ac8fa" },
 };
 
 const TSUNAMI_NWS_EVENTS = [
