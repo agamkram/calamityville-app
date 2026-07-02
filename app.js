@@ -44,6 +44,7 @@ const PIN_RADIUS = 0.0065;
 const PIN_RADIUS_TSUNAMI = 0.0085;
 const PIN_TSUNAMI_HALO_SCALE = 1.35;
 const PIN_SEGMENTS = 16;
+const PIN_TORNADO_CORE_RADIUS = PIN_RADIUS * 0.36;
 const POLE_LIMIT = THREE.MathUtils.degToRad(12);
 const ZOOM_VIEW_DISTANCE = { earth: 3.2, moon: 0.85 };
 const ZOOM_SURFACE_CLEARANCE = 0.2;
@@ -88,7 +89,7 @@ const sheetTsunamiEl = document.getElementById("sheet-tsunami");
 let subsolarObserver;
 let scene, camera, renderer, controls;
 let earthGroup, moonGroup, moonMesh, moonEarthshine, sunGroup, sunMesh, sunLight, fillLight, pinsGroup;
-let pinGeometry, pinGeometryTsunami, pinMaterials, tornadoSwirlTexture;
+let pinGeometry, pinGeometryTsunami, pinGeometryTornadoCore, pinMaterials;
 let moonLodLevel = "low";
 let moonHqPromise = null;
 let sunLodLevel = "low";
@@ -318,54 +319,10 @@ function createEarth() {
   }
 }
 
-function createTornadoSwirlTexture(size = 128) {
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  const cx = size / 2;
-  const cy = size / 2;
-
-  ctx.fillStyle = "#f8fafc";
-  ctx.fillRect(0, 0, size, size);
-
-  const arms = 2;
-  const turns = 1.8;
-  const maxR = size * 0.46;
-  const steps = 180;
-
-  for (let arm = 0; arm < arms; arm += 1) {
-    const phase = (arm / arms) * Math.PI * 2;
-    ctx.strokeStyle = "rgba(226, 232, 240, 0.95)";
-    ctx.lineWidth = size * 0.07;
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    for (let i = 0; i <= steps; i += 1) {
-      const t = i / steps;
-      const angle = phase + t * turns * Math.PI * 2;
-      const r = t * maxR;
-      const x = cx + Math.cos(angle) * r;
-      const y = cy + Math.sin(angle) * r;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-  }
-
-  ctx.fillStyle = "#ff2d55";
-  ctx.beginPath();
-  ctx.arc(cx, cy, size * 0.09, 0, Math.PI * 2);
-  ctx.fill();
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
 function initPinAssets() {
   pinGeometry = new THREE.SphereGeometry(PIN_RADIUS, PIN_SEGMENTS, PIN_SEGMENTS);
   pinGeometryTsunami = new THREE.SphereGeometry(PIN_RADIUS_TSUNAMI, PIN_SEGMENTS, PIN_SEGMENTS);
-  tornadoSwirlTexture = createTornadoSwirlTexture();
+  pinGeometryTornadoCore = new THREE.SphereGeometry(PIN_TORNADO_CORE_RADIUS, PIN_SEGMENTS, PIN_SEGMENTS);
   pinMaterials = {
     _default: new THREE.MeshBasicMaterial({ color: "#ffffff" }),
     _tsunamiHalo: new THREE.MeshBasicMaterial({
@@ -373,7 +330,8 @@ function initPinAssets() {
       transparent: true,
       opacity: 0.5,
     }),
-    tornado: new THREE.MeshBasicMaterial({ map: tornadoSwirlTexture }),
+    tornado: new THREE.MeshBasicMaterial({ color: "#f8fafc" }),
+    _tornadoCore: new THREE.MeshBasicMaterial({ color: "#ff2d55" }),
   };
   for (const [type, info] of Object.entries(DISASTER_TYPES)) {
     if (type === "tornado") continue;
@@ -519,7 +477,16 @@ function createPin(event) {
 
   const tsunamiPin = event.type === "tsunami" || event.tsunami;
   const geo = tsunamiPin ? pinGeometryTsunami : pinGeometry;
-  root.add(new THREE.Mesh(geo, mat));
+
+  if (event.type === "tornado") {
+    root.add(new THREE.Mesh(geo, pinMaterials.tornado));
+    const outward = pos.clone().normalize();
+    const core = new THREE.Mesh(pinGeometryTornadoCore, pinMaterials._tornadoCore);
+    core.position.copy(outward.multiplyScalar(PIN_RADIUS * 0.9));
+    root.add(core);
+  } else {
+    root.add(new THREE.Mesh(geo, mat));
+  }
 
   if (tsunamiPin) {
     const halo = new THREE.Mesh(pinGeometryTsunami, pinMaterials._tsunamiHalo);
@@ -768,10 +735,10 @@ export function destroyGlobe() {
   clearPins();
   pinGeometry?.dispose();
   pinGeometryTsunami?.dispose();
+  pinGeometryTornadoCore?.dispose();
   if (pinMaterials) {
     for (const mat of Object.values(pinMaterials)) mat.dispose();
   }
-  tornadoSwirlTexture?.dispose();
 
   controls?.dispose();
   renderer?.dispose();
