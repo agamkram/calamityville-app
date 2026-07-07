@@ -158,17 +158,27 @@ function inWindow(timeMs, hours) {
   return timeMs >= windowStartMs(hours);
 }
 
-function latestGeometry(geometries, hours) {
+function latestGeometry(geometries, hours, { ongoing = false } = {}) {
   if (!geometries) return null;
   const list = Array.isArray(geometries) ? geometries : [geometries];
   if (!list.length) return null;
+
+  const points = list.filter(
+    (g) => g.type === "Point" && Array.isArray(g.coordinates) && g.coordinates.length >= 2
+  );
+  if (!points.length) return null;
+
+  if (ongoing) {
+    return points.reduce((latest, g) =>
+      !latest || new Date(g.date) > new Date(latest.date) ? g : latest
+    );
+  }
 
   const cutoff = windowStartMs(hours);
   let best = null;
   let fallback = null;
 
-  for (const g of list) {
-    if (g.type !== "Point" || !Array.isArray(g.coordinates) || g.coordinates.length < 2) continue;
+  for (const g of points) {
     if (!fallback) fallback = g;
     const t = new Date(g.date).getTime();
     if (Number.isNaN(t) || t < cutoff) continue;
@@ -180,7 +190,8 @@ function latestGeometry(geometries, hours) {
 
 function parseEonetEvent(ev, type, hours) {
   try {
-    const geom = latestGeometry(ev.geometry, hours);
+    const ongoing = type === "hurricane" && !ev.closed;
+    const geom = latestGeometry(ev.geometry, hours, { ongoing });
     if (!geom) return null;
 
     const [lon, lat] = geom.coordinates;
@@ -188,7 +199,7 @@ function parseEonetEvent(ev, type, hours) {
 
     const time = new Date(geom.date).getTime();
     if (Number.isNaN(time)) return null;
-    if (!inWindow(time, hours) && type !== "volcano") return null;
+    if (!ongoing && !inWindow(time, hours) && type !== "volcano") return null;
 
     let description = ev.title || "EONET event";
     if (geom.magnitudeValue != null && geom.magnitudeUnit) {
@@ -218,9 +229,9 @@ async function fetchEonetJson(days) {
   if (typeof window !== "undefined") {
     urls.push(`/api/eonet?days=${days}`);
   }
-  let lastError;
 
-  for (const url of urls) {
+  const fetchOne = async (url) => {
+    let lastError;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const res = await fetchWithTimeout(url);
@@ -231,9 +242,15 @@ async function fetchEonetJson(days) {
         if (attempt === 0) await new Promise((r) => setTimeout(r, 600));
       }
     }
+    throw lastError || new Error("EONET unavailable");
+  };
+
+  const results = await Promise.allSettled(urls.map((url) => fetchOne(url)));
+  for (const result of results) {
+    if (result.status === "fulfilled") return result.value;
   }
 
-  throw lastError || new Error("EONET unavailable");
+  throw results[0]?.reason || new Error("EONET unavailable");
 }
 
 function nearDuplicateStorm(a, b) {
@@ -570,8 +587,9 @@ async function fetchHurricanes() {
 }
 
 async function fetchEonet(hours) {
-  const days = Math.min(3, Math.max(1, Math.ceil(hours / 24)));
-  const data = await fetchEonetJson(days);
+  // EONET's days window is when an event *opened*, not last update — use max days so
+  // ongoing Western Pacific storms (e.g. Bavi) are not dropped on the 24h/48h filters.
+  const data = await fetchEonetJson(3);
 
   const general = [];
   const severeStorms = [];
