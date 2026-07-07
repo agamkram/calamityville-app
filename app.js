@@ -57,6 +57,8 @@ const ZOOM_LIMITS = {
 /** Wheel uses normalized deltas; pinch uses Math.pow(ratio, zoomSpeed) — needs a far lower value. */
 const WHEEL_ZOOM_SPEED = 16;
 const TOUCH_ZOOM_SPEED = 1.2;
+const MOUSE_ROTATE_SPEED = 0.3;
+const TOUCH_ROTATE_SPEED = 0.2;
 
 const MOON_LOD = {
   low: {
@@ -192,11 +194,12 @@ function isCoarsePointer() {
   return window.matchMedia("(pointer: coarse)").matches;
 }
 
-function applyZoomSpeed(pointerType) {
+function applyControlSpeed(pointerType) {
   if (!controls) return;
   const touchLike =
     pointerType === "touch" || (isCoarsePointer() && pointerType !== "mouse");
   controls.zoomSpeed = touchLike ? TOUCH_ZOOM_SPEED : WHEEL_ZOOM_SPEED;
+  controls.rotateSpeed = touchLike ? TOUCH_ROTATE_SPEED : MOUSE_ROTATE_SPEED;
 }
 
 function clampCameraDistance() {
@@ -688,12 +691,12 @@ function initScene() {
   controls.enablePan = false;
   applyZoomLimits("earth");
   controls.enableDamping = false;
-  controls.rotateSpeed = 0.65;
+  controls.rotateSpeed = MOUSE_ROTATE_SPEED;
   controls.zoomSpeed = WHEEL_ZOOM_SPEED;
   controls.enableZoom = true;
-  applyZoomSpeed(isCoarsePointer() ? "touch" : "wheel");
-  canvas.addEventListener("wheel", () => applyZoomSpeed("wheel"), { passive: true });
-  canvas.addEventListener("pointerdown", (e) => applyZoomSpeed(e.pointerType), { capture: true });
+  applyControlSpeed(isCoarsePointer() ? "touch" : "mouse");
+  canvas.addEventListener("wheel", () => applyControlSpeed("mouse"), { passive: true });
+  canvas.addEventListener("pointerdown", (e) => applyControlSpeed(e.pointerType), { capture: true });
   camera.up.set(0, 1, 0);
   controls.minPolarAngle = POLE_LIMIT;
   controls.maxPolarAngle = Math.PI - POLE_LIMIT;
