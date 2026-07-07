@@ -158,6 +158,32 @@ function inWindow(timeMs, hours) {
   return timeMs >= windowStartMs(hours);
 }
 
+function stormTrackPoints(geometries, hours) {
+  if (!geometries) return [];
+  const list = Array.isArray(geometries) ? geometries : [geometries];
+  const cutoff = windowStartMs(hours);
+  const points = [];
+
+  for (const g of list) {
+    if (g.type !== "Point" || !Array.isArray(g.coordinates) || g.coordinates.length < 2) continue;
+    const time = new Date(g.date).getTime();
+    if (Number.isNaN(time) || time < cutoff) continue;
+
+    const [lon, lat] = g.coordinates;
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+
+    points.push({
+      lat,
+      lon,
+      time,
+      intensity: g.magnitudeValue ?? null,
+      intensityUnit: g.magnitudeUnit || null,
+    });
+  }
+
+  return points.sort((a, b) => a.time - b.time);
+}
+
 function latestGeometry(geometries, hours, { ongoing = false } = {}) {
   if (!geometries) return null;
   const list = Array.isArray(geometries) ? geometries : [geometries];
@@ -208,7 +234,7 @@ function parseEonetEvent(ev, type, hours) {
     if (ev.description) description = ev.description;
 
     const sourceUrls = (ev.sources || []).map((s) => s.url).filter(Boolean);
-    return {
+    const event = {
       id: `eonet-${ev.id}`,
       type,
       title: ev.title || description,
@@ -219,6 +245,13 @@ function parseEonetEvent(ev, type, hours) {
       source: "NASA EONET",
       url: pickDetailUrl(type, ...sourceUrls, ev.link),
     };
+
+    if (type === "hurricane") {
+      const track = stormTrackPoints(ev.geometry, hours);
+      if (track.length >= 2) event.track = track;
+    }
+
+    return event;
   } catch {
     return null;
   }
@@ -230,27 +263,18 @@ async function fetchEonetJson(days) {
     urls.push(`/api/eonet?days=${days}`);
   }
 
-  const fetchOne = async (url) => {
-    let lastError;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const res = await fetchWithTimeout(url);
-        if (!res.ok) throw new Error(`EONET HTTP ${res.status}`);
-        return JSON.parse(await res.text());
-      } catch (err) {
-        lastError = err;
-        if (attempt === 0) await new Promise((r) => setTimeout(r, 600));
-      }
+  let lastError;
+  for (const url of urls) {
+    try {
+      const res = await fetchWithTimeout(url);
+      if (!res.ok) throw new Error(`EONET HTTP ${res.status}`);
+      return await res.json();
+    } catch (err) {
+      lastError = err;
     }
-    throw lastError || new Error("EONET unavailable");
-  };
-
-  const results = await Promise.allSettled(urls.map((url) => fetchOne(url)));
-  for (const result of results) {
-    if (result.status === "fulfilled") return result.value;
   }
 
-  throw results[0]?.reason || new Error("EONET unavailable");
+  throw lastError || new Error("EONET unavailable");
 }
 
 function nearDuplicateStorm(a, b) {
@@ -259,9 +283,15 @@ function nearDuplicateStorm(a, b) {
 
 /** Prefer NHC entries; add EONET severe storms that are not colocated duplicates. */
 function mergeHurricanes(nhcStorms, eonetStorms) {
-  const merged = [...nhcStorms];
+  const merged = nhcStorms.map((storm) => ({ ...storm }));
   for (const storm of eonetStorms) {
-    if (merged.some((h) => nearDuplicateStorm(h, storm))) continue;
+    const dupeIdx = merged.findIndex((h) => nearDuplicateStorm(h, storm));
+    if (dupeIdx >= 0) {
+      if (storm.track?.length >= 2 && !merged[dupeIdx].track) {
+        merged[dupeIdx].track = storm.track;
+      }
+      continue;
+    }
     merged.push(storm);
   }
   return merged;
@@ -390,14 +420,31 @@ async function fetchTornadoes(hours) {
     events.push(ev);
   };
 
-  try {
+  const parseIem = async () => {
     const { sts, ets } = iemTimeRange(hours);
     const url = `https://mesonet.agron.iastate.edu/geojson/lsr.geojson?sts=${sts}&ets=${ets}`;
     const res = await fetchWithTimeout(url);
     if (!res.ok) throw new Error(`IEM LSR ${res.status}`);
-    const data = await res.json();
+    return res.json();
+  };
 
-    for (const feature of data.features || []) {
+  const parseNwsTornado = async (eventName) => {
+    const res = await fetchWithTimeout(
+      `https://api.weather.gov/alerts/active?event=${encodeURIComponent(eventName)}`
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.features || []).map((feature) => ({ feature, eventName }));
+  };
+
+  const results = await Promise.allSettled([
+    parseIem(),
+    parseNwsTornado("Tornado Warning"),
+    parseNwsTornado("Tornado Watch"),
+  ]);
+
+  if (results[0].status === "fulfilled") {
+    for (const feature of results[0].value.features || []) {
       const p = feature.properties;
       if (p?.type !== "T") continue;
 
@@ -419,39 +466,34 @@ async function fetchTornadoes(hours) {
         url: "https://www.spc.noaa.gov/climo/reports/",
       });
     }
-  } catch (err) {
-    console.warn("IEM tornado reports:", err);
+  } else {
+    console.warn("IEM tornado reports:", results[0].reason);
   }
 
-  for (const eventName of ["Tornado Warning", "Tornado Watch"]) {
-    try {
-      const res = await fetchWithTimeout(
-        `https://api.weather.gov/alerts/active?event=${encodeURIComponent(eventName)}`
-      );
-      if (!res.ok) continue;
-      const data = await res.json();
+  for (let i = 1; i < results.length; i++) {
+    const result = results[i];
+    if (result.status !== "fulfilled") {
+      console.warn("NWS tornado alerts:", result.reason);
+      continue;
+    }
+    for (const { feature, eventName } of result.value) {
+      const p = feature.properties || {};
+      const coords = geometryCentroid(feature.geometry);
+      if (!coords) continue;
+      const [lon, lat] = coords;
+      const time = new Date(p.sent || p.effective || Date.now()).getTime();
 
-      for (const feature of data.features || []) {
-        const p = feature.properties || {};
-        const coords = geometryCentroid(feature.geometry);
-        if (!coords) continue;
-        const [lon, lat] = coords;
-        const time = new Date(p.sent || p.effective || Date.now()).getTime();
-
-        add({
-          id: `nws-${p.id || p.sent}`,
-          type: "tornado",
-          title: p.headline || eventName,
-          lat,
-          lon,
-          time,
-          description: p.description || p.event || eventName,
-          source: "NWS",
-          url: pickDetailUrl("tornado", p.id, "https://www.weather.gov/"),
-        });
-      }
-    } catch (err) {
-      console.warn(`NWS ${eventName}:`, err);
+      add({
+        id: `nws-${p.id || p.sent}`,
+        type: "tornado",
+        title: p.headline || eventName,
+        lat,
+        lon,
+        time,
+        description: p.description || p.event || eventName,
+        source: "NWS",
+        url: pickDetailUrl("tornado", p.id, "https://www.weather.gov/"),
+      });
     }
   }
 
@@ -487,21 +529,23 @@ async function fetchNwsTsunamiAlerts(hours, seen, events, { active }) {
   const start = new Date(windowStartMs(hours)).toISOString();
   const end = new Date().toISOString();
 
-  for (const eventName of TSUNAMI_NWS_EVENTS) {
-    try {
-      const base = active
-        ? `https://api.weather.gov/alerts/active?event=${encodeURIComponent(eventName)}`
-        : `https://api.weather.gov/alerts?event=${encodeURIComponent(eventName)}&start=${start}&end=${end}&status=actual`;
-      const res = await fetchWithTimeout(base, { headers: NWS_HEADERS });
-      if (!res.ok) continue;
-      const data = await res.json();
-      for (const feature of data.features || []) {
-        parseNwsTsunamiFeature(feature, seen, events);
+  await Promise.all(
+    TSUNAMI_NWS_EVENTS.map(async (eventName) => {
+      try {
+        const base = active
+          ? `https://api.weather.gov/alerts/active?event=${encodeURIComponent(eventName)}`
+          : `https://api.weather.gov/alerts?event=${encodeURIComponent(eventName)}&start=${start}&end=${end}&status=actual`;
+        const res = await fetchWithTimeout(base, { headers: NWS_HEADERS });
+        if (!res.ok) return;
+        const data = await res.json();
+        for (const feature of data.features || []) {
+          parseNwsTsunamiFeature(feature, seen, events);
+        }
+      } catch (err) {
+        console.warn(`NWS tsunami ${active ? "active" : "recent"} ${eventName}:`, err);
       }
-    } catch (err) {
-      console.warn(`NWS tsunami ${active ? "active" : "recent"} ${eventName}:`, err);
-    }
-  }
+    })
+  );
 }
 
 async function fetchTsunamiAtomBulletins(hours, seen, events) {
@@ -545,9 +589,11 @@ async function fetchTsunamis(hours) {
   const events = [];
   const seen = new Set();
 
-  await fetchNwsTsunamiAlerts(hours, seen, events, { active: true });
-  await fetchNwsTsunamiAlerts(hours, seen, events, { active: false });
-  await fetchTsunamiAtomBulletins(hours, seen, events);
+  await Promise.all([
+    fetchNwsTsunamiAlerts(hours, seen, events, { active: true }),
+    fetchNwsTsunamiAlerts(hours, seen, events, { active: false }),
+    fetchTsunamiAtomBulletins(hours, seen, events),
+  ]);
 
   return events;
 }

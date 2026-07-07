@@ -1,5 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { Line2 } from "three/addons/lines/Line2.js";
+import { LineGeometry } from "three/addons/lines/LineGeometry.js";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { DISASTER_TYPES, fetchDisasters, formatEventTime } from "./data.js";
 
 const EARTH_RADIUS = 1;
@@ -40,6 +43,8 @@ const SUN_FRAGMENT_SHADER = `
 `;
 
 const PIN_ALTITUDE = 0.012;
+const TRACK_ALTITUDE = 0.008;
+const TRACK_LINE_WIDTH = 2;
 const PIN_RADIUS = 0.0065;
 const PIN_HIT_SCALE = 2.5;
 const PIN_RADIUS_TSUNAMI = 0.0085;
@@ -92,13 +97,15 @@ const sheetTsunamiEl = document.getElementById("sheet-tsunami");
 
 let subsolarObserver;
 let scene, camera, renderer, controls;
-let earthGroup, moonGroup, moonMesh, moonEarthshine, sunGroup, sunMesh, sunLight, fillLight, pinsGroup;
+let earthGroup, moonGroup, moonMesh, moonEarthshine, sunGroup, sunMesh, sunLight, fillLight, pinsGroup, tracksGroup;
 let pinGeometry, pinGeometryTsunami, pinHitGeometry, pinHitGeometryTsunami, pinMaterials, pinHitMaterial;
+let trackLineMaterial;
 let moonLodLevel = "low";
 let moonHqPromise = null;
 let sunLodLevel = "low";
 let sunHqPromise = null;
 let pinMeshes = [];
+let trackMeshes = [];
 let allEvents = [];
 let currentHours = 72;
 let viewCenter = "earth";
@@ -300,10 +307,17 @@ function loadTexture(url) {
 }
 
 function loadStarBackground() {
-  textureLoader.load("stars-8k.jpg", (tex) => {
-    configureSkyTexture(tex);
-    scene.background = tex;
-  });
+  const load = () => {
+    textureLoader.load("stars-8k.jpg", (tex) => {
+      configureSkyTexture(tex);
+      scene.background = tex;
+    });
+  };
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(load, { timeout: 1500 });
+  } else {
+    setTimeout(load, 0);
+  }
 }
 
 function createEarth() {
@@ -335,6 +349,9 @@ function createEarth() {
   mat.color.multiplyScalar(1.25);
 
   earthGroup.add(new THREE.Mesh(new THREE.SphereGeometry(EARTH_RADIUS, 64, 64), mat));
+
+  tracksGroup = new THREE.Group();
+  earthGroup.add(tracksGroup);
 
   pinsGroup = new THREE.Group();
   earthGroup.add(pinsGroup);
@@ -377,6 +394,21 @@ function createTornadoPinTexture() {
   const tex = new THREE.CanvasTexture(el);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
+}
+
+function initTrackAssets() {
+  trackLineMaterial = new LineMaterial({
+    color: DISASTER_TYPES.hurricane.color,
+    linewidth: TRACK_LINE_WIDTH,
+    transparent: true,
+    opacity: 0.8,
+    depthTest: true,
+    worldUnits: false,
+  });
+}
+
+function updateTrackLineResolution(width, height) {
+  trackLineMaterial?.resolution.set(width, height);
 }
 
 function initPinAssets() {
@@ -542,6 +574,36 @@ function clearPins() {
   pinMeshes = [];
 }
 
+function clearTracks() {
+  for (const line of trackMeshes) {
+    tracksGroup.remove(line);
+    line.geometry?.dispose();
+  }
+  trackMeshes = [];
+}
+
+function createTrack(event) {
+  const track = event.track;
+  if (!track || track.length < 2 || !trackLineMaterial) return;
+
+  const positions = new Float32Array(track.length * 3);
+  for (let i = 0; i < track.length; i++) {
+    const pos = latLonToPosition(track[i].lat, track[i].lon, EARTH_RADIUS + TRACK_ALTITUDE);
+    positions[i * 3] = pos.x;
+    positions[i * 3 + 1] = pos.y;
+    positions[i * 3 + 2] = pos.z;
+  }
+
+  const geometry = new LineGeometry();
+  geometry.setPositions(positions);
+
+  const line = new Line2(geometry, trackLineMaterial);
+  line.computeLineDistances();
+  line.userData.event = event;
+  tracksGroup.add(line);
+  trackMeshes.push(line);
+}
+
 function createPin(event) {
   const mat = pinMaterials[event.type] || pinMaterials._default;
   const pos = latLonToPosition(event.lat, event.lon, EARTH_RADIUS + PIN_ALTITUDE);
@@ -588,9 +650,12 @@ function updateEventCount(visible, total) {
 
 function applyPinFilter() {
   clearPins();
+  clearTracks();
   const visible = allEvents.filter((ev) => activeTypes.has(ev.type));
+  const showTracks = activeTypes.has("hurricane");
   for (const ev of visible) {
     if (Number.isFinite(ev.lat) && Number.isFinite(ev.lon)) createPin(ev);
+    if (showTracks && ev.type === "hurricane") createTrack(ev);
   }
   updateEventCount(visible.length, allEvents.length);
 }
@@ -710,6 +775,7 @@ function initScene() {
   renderer.toneMappingExposure = 1.2;
 
   initPinAssets();
+  initTrackAssets();
   loadStarBackground();
 
   createLights();
@@ -761,6 +827,7 @@ function resize() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   renderer.setSize(w, h, false);
+  updateTrackLineResolution(w, h);
 
   if (viewCenter === "earth" && controls) {
     const minDist = earthCameraDistance();
@@ -789,6 +856,7 @@ function animate() {
 }
 
 export function bootGlobe() {
+  loadEvents(currentHours);
   try {
     initScene();
     resize();
@@ -800,7 +868,6 @@ export function bootGlobe() {
     console.error("Globe init failed:", err);
     loadingEl.classList.remove("visible");
   }
-  loadEvents(currentHours);
   startEventRefresh();
   return { resize };
 }
@@ -815,6 +882,7 @@ export function destroyGlobe() {
   sheetBackdrop.removeEventListener("click", hideEventSheet);
 
   clearPins();
+  clearTracks();
   pinGeometry?.dispose();
   pinGeometryTsunami?.dispose();
   pinHitGeometry?.dispose();
@@ -824,6 +892,7 @@ export function destroyGlobe() {
     pinMaterials.tornado?.map?.dispose();
     for (const mat of Object.values(pinMaterials)) mat.dispose();
   }
+  trackLineMaterial?.dispose();
 
   controls?.dispose();
   renderer?.dispose();
