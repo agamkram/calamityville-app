@@ -41,6 +41,7 @@ const SUN_FRAGMENT_SHADER = `
 
 const PIN_ALTITUDE = 0.012;
 const PIN_RADIUS = 0.0065;
+const PIN_HIT_SCALE = 2.5;
 const PIN_RADIUS_TSUNAMI = 0.0085;
 const PIN_TSUNAMI_HALO_SCALE = 1.35;
 const PIN_SEGMENTS = 16;
@@ -54,8 +55,8 @@ const ZOOM_LIMITS = {
   moon: { min: MOON_RADIUS + ZOOM_SURFACE_CLEARANCE, max: ZOOM_MAX_DISTANCE },
 };
 /** Wheel uses normalized deltas; pinch uses Math.pow(ratio, zoomSpeed) — needs a far lower value. */
-const WHEEL_ZOOM_SPEED = 54;
-const TOUCH_ZOOM_SPEED = 1.9;
+const WHEEL_ZOOM_SPEED = 16;
+const TOUCH_ZOOM_SPEED = 1.2;
 
 const MOON_LOD = {
   low: {
@@ -89,7 +90,7 @@ const sheetTsunamiEl = document.getElementById("sheet-tsunami");
 let subsolarObserver;
 let scene, camera, renderer, controls;
 let earthGroup, moonGroup, moonMesh, moonEarthshine, sunGroup, sunMesh, sunLight, fillLight, pinsGroup;
-let pinGeometry, pinGeometryTsunami, pinMaterials;
+let pinGeometry, pinGeometryTsunami, pinHitGeometry, pinHitGeometryTsunami, pinMaterials, pinHitMaterial;
 let moonLodLevel = "low";
 let moonHqPromise = null;
 let sunLodLevel = "low";
@@ -347,6 +348,17 @@ function createTornadoPinTexture() {
 function initPinAssets() {
   pinGeometry = new THREE.SphereGeometry(PIN_RADIUS, PIN_SEGMENTS, PIN_SEGMENTS);
   pinGeometryTsunami = new THREE.SphereGeometry(PIN_RADIUS_TSUNAMI, PIN_SEGMENTS, PIN_SEGMENTS);
+  pinHitGeometry = new THREE.SphereGeometry(PIN_RADIUS * PIN_HIT_SCALE, PIN_SEGMENTS, PIN_SEGMENTS);
+  pinHitGeometryTsunami = new THREE.SphereGeometry(
+    PIN_RADIUS_TSUNAMI * PIN_HIT_SCALE,
+    PIN_SEGMENTS,
+    PIN_SEGMENTS
+  );
+  pinHitMaterial = new THREE.MeshBasicMaterial({
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  });
   pinMaterials = {
     _default: new THREE.MeshBasicMaterial({ color: "#ffffff" }),
     _tsunamiHalo: new THREE.MeshBasicMaterial({
@@ -511,8 +523,15 @@ function createPin(event) {
     const pinDiameter = PIN_RADIUS * 2;
     sprite.scale.set(pinDiameter, pinDiameter, 1);
     root.add(sprite);
+    const hit = new THREE.Mesh(pinHitGeometry, pinHitMaterial);
+    hit.userData.event = event;
+    root.add(hit);
   } else {
     root.add(new THREE.Mesh(geo, mat));
+    const hitGeo = tsunamiPin ? pinHitGeometryTsunami : pinHitGeometry;
+    const hit = new THREE.Mesh(hitGeo, pinHitMaterial);
+    hit.userData.event = event;
+    root.add(hit);
   }
 
   if (tsunamiPin) {
@@ -629,7 +648,7 @@ function onPointerDown(event) {
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
-  raycaster.params.Sprite = { threshold: PIN_RADIUS * 1.5 };
+  raycaster.params.Sprite = { threshold: PIN_RADIUS * PIN_HIT_SCALE };
   const hits = raycaster.intersectObjects(pinMeshes, true);
   const hit = hits.find((h) => h.object.userData.event || h.object.parent?.userData.event);
   const pinEvent = hit?.object.userData.event || hit?.object.parent?.userData.event;
@@ -763,6 +782,9 @@ export function destroyGlobe() {
   clearPins();
   pinGeometry?.dispose();
   pinGeometryTsunami?.dispose();
+  pinHitGeometry?.dispose();
+  pinHitGeometryTsunami?.dispose();
+  pinHitMaterial?.dispose();
   if (pinMaterials) {
     pinMaterials.tornado?.map?.dispose();
     for (const mat of Object.values(pinMaterials)) mat.dispose();

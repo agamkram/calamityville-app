@@ -86,6 +86,55 @@ const CURATED_VOLCANOES = [
 
 const FETCH_TIMEOUT_MS = 20_000;
 
+const DETAIL_URL_FALLBACKS = {
+  earthquake: "https://earthquake.usgs.gov/",
+  volcano: "https://www.usgs.gov/programs/VHP",
+  hurricane: "https://www.nhc.noaa.gov/",
+  fire: "https://www.nifc.gov/",
+  flood: "https://www.weather.gov/safety/flood",
+  tornado: "https://www.spc.noaa.gov/climo/reports/",
+  tsunami: "https://www.tsunami.gov/",
+};
+
+const MACHINE_URL_RE = /\.(xml|rss|atom|geojson|tcw|kmz|kml|zip|json)(\?|$)/i;
+const API_URL_RE = /\/api\/|api\.weather\.gov\/alerts\//i;
+
+function isReadableDetailUrl(url) {
+  if (!url || typeof url !== "string") return false;
+  try {
+    const parsed = new URL(url);
+    if (API_URL_RE.test(url)) return false;
+    if (parsed.hostname === "eonet.gsfc.nasa.gov" && url.includes("/api/")) return false;
+    if (MACHINE_URL_RE.test(url)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeDetailUrl(url, type) {
+  if (!url) return null;
+  if (isReadableDetailUrl(url)) return url;
+
+  if (/metoc\.navy\.mil\/jtwc\/products\/[a-z]{2}\d{4}\./i.test(url)) {
+    return url.replace(/\/([a-z]{2}\d{4})\.[^/]+$/i, "/$1web.txt");
+  }
+
+  if (/api\.weather\.gov\/alerts\//.test(url)) {
+    return "https://www.weather.gov/";
+  }
+
+  return DETAIL_URL_FALLBACKS[type] || null;
+}
+
+function pickDetailUrl(type, ...candidates) {
+  for (const candidate of candidates) {
+    const normalized = normalizeDetailUrl(candidate, type);
+    if (normalized) return normalized;
+  }
+  return DETAIL_URL_FALLBACKS[type] || null;
+}
+
 async function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -147,6 +196,7 @@ function parseEonetEvent(ev, type, hours) {
     }
     if (ev.description) description = ev.description;
 
+    const sourceUrls = (ev.sources || []).map((s) => s.url).filter(Boolean);
     return {
       id: `eonet-${ev.id}`,
       type,
@@ -156,7 +206,7 @@ function parseEonetEvent(ev, type, hours) {
       time,
       description,
       source: "NASA EONET",
-      url: ev.link,
+      url: pickDetailUrl(type, ...sourceUrls, ev.link),
     };
   } catch {
     return null;
@@ -305,7 +355,7 @@ async function fetchEarthquakes(hours) {
       magnitude: p.mag,
       description: `${p.title}. Magnitude ${p.mag}${p.felt ? `, felt by ${p.felt} people` : ""}.`,
       source: "USGS",
-      url: p.url,
+      url: pickDetailUrl("earthquake", p.url),
       tsunami: p.tsunami === 1,
     };
   });
@@ -380,7 +430,7 @@ async function fetchTornadoes(hours) {
           time,
           description: p.description || p.event || eventName,
           source: "NWS",
-          url: p.id || "https://www.weather.gov/",
+          url: pickDetailUrl("tornado", p.id, "https://www.weather.gov/"),
         });
       }
     } catch (err) {
@@ -410,7 +460,7 @@ function parseNwsTsunamiFeature(feature, seen, events) {
     time,
     description: p.description || p.event || "Coastal tsunami alert",
     source: "NWS / NOAA",
-    url: p.id ? `https://api.weather.gov/alerts/${p.id}` : "https://www.tsunami.gov/",
+    url: pickDetailUrl("tsunami", p.id, "https://www.tsunami.gov/"),
     alertLevel: p.event,
     severity: p.severity,
   });
@@ -468,7 +518,7 @@ async function fetchTsunamiAtomBulletins(hours, seen, events) {
       time,
       description: bulletin.description,
       source: bulletin.source,
-      url: bulletin.url || "https://www.tsunami.gov/",
+      url: pickDetailUrl("tsunami", bulletin.url, "https://www.tsunami.gov/"),
       alertLevel: bulletin.category,
     });
   }
@@ -503,7 +553,13 @@ async function fetchHurricanes() {
         time: s.lastUpdate ? new Date(s.lastUpdate).getTime() : Date.now(),
         description: `${classification} ${s.name}. ${intensity ? `Winds ${intensity}. ` : ""}Moving ${s.movementDir}° at ${s.movementSpeed} kt.`,
         source: "NOAA NHC",
-        url: s.publicAdvisory?.url || "https://www.nhc.noaa.gov/",
+        url: pickDetailUrl(
+          "hurricane",
+          s.publicAdvisory?.url,
+          s.forecastGraphics?.url,
+          s.forecastDiscussion?.url,
+          "https://www.nhc.noaa.gov/"
+        ),
         movementDir: s.movementDir,
         movementSpeed: s.movementSpeed,
       };
