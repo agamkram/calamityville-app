@@ -58,7 +58,8 @@ const ZOOM_LIMITS = {
 const WHEEL_ZOOM_SPEED = 16;
 const TOUCH_ZOOM_SPEED = 1.2;
 const MOUSE_ROTATE_SPEED = 0.3;
-const TOUCH_ROTATE_SPEED = 0.2;
+const TOUCH_ROTATE_SPEED_NEAR = 0.2;
+const TOUCH_ROTATE_SPEED_FAR = 0.55;
 
 const MOON_LOD = {
   low: {
@@ -104,6 +105,7 @@ let viewCenter = "earth";
 let animationId = null;
 let refreshTimer = null;
 let eventsLoading = false;
+let touchLikeControls = false;
 
 const EVENT_REFRESH_MS = 5 * 60 * 1000;
 
@@ -194,12 +196,41 @@ function isCoarsePointer() {
   return window.matchMedia("(pointer: coarse)").matches;
 }
 
+function cameraDistance() {
+  if (!camera || !controls) return ZOOM_VIEW_DISTANCE.earth;
+  return camera.position.distanceTo(controls.target);
+}
+
+function touchRotateFarDistance() {
+  const limits = ZOOM_LIMITS[viewCenter] || ZOOM_LIMITS.earth;
+  if (viewCenter === "moon") return ZOOM_VIEW_DISTANCE.moon * 1.6;
+  return Math.max(earthCameraDistance(), limits.min + 2.2);
+}
+
+function updateRotateSpeed() {
+  if (!controls) return;
+  if (!touchLikeControls) {
+    controls.rotateSpeed = MOUSE_ROTATE_SPEED;
+    return;
+  }
+
+  const limits = ZOOM_LIMITS[viewCenter] || ZOOM_LIMITS.earth;
+  const nearDist = limits.min + 0.35;
+  const farDist = touchRotateFarDistance();
+  const t = THREE.MathUtils.clamp(
+    THREE.MathUtils.inverseLerp(nearDist, farDist, cameraDistance()),
+    0,
+    1
+  );
+  controls.rotateSpeed = THREE.MathUtils.lerp(TOUCH_ROTATE_SPEED_NEAR, TOUCH_ROTATE_SPEED_FAR, t);
+}
+
 function applyControlSpeed(pointerType) {
   if (!controls) return;
-  const touchLike =
+  touchLikeControls =
     pointerType === "touch" || (isCoarsePointer() && pointerType !== "mouse");
-  controls.zoomSpeed = touchLike ? TOUCH_ZOOM_SPEED : WHEEL_ZOOM_SPEED;
-  controls.rotateSpeed = touchLike ? TOUCH_ROTATE_SPEED : MOUSE_ROTATE_SPEED;
+  controls.zoomSpeed = touchLikeControls ? TOUCH_ZOOM_SPEED : WHEEL_ZOOM_SPEED;
+  updateRotateSpeed();
 }
 
 function clampCameraDistance() {
@@ -753,6 +784,7 @@ function animate() {
 
   controls.update();
   clampCameraDistance();
+  updateRotateSpeed();
   renderer.render(scene, camera);
 }
 
