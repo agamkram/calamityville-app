@@ -99,10 +99,66 @@ const DETAIL_URL_FALLBACKS = {
 const MACHINE_URL_RE = /\.(xml|rss|atom|geojson|tcw|kmz|kml|zip|json)(\?|$)/i;
 const API_URL_RE = /\/api\/|api\.weather\.gov\/alerts\//i;
 
+const PAYWALL_HOSTS = new Set([
+  "nytimes.com",
+  "wsj.com",
+  "ft.com",
+  "washingtonpost.com",
+  "economist.com",
+  "bloomberg.com",
+  "thetimes.co.uk",
+  "telegraph.co.uk",
+  "latimes.com",
+  "bostonglobe.com",
+  "newyorker.com",
+  "theatlantic.com",
+]);
+
+const MAINSTREAM_FREE_HOSTS = new Set([
+  "bbc.com",
+  "bbc.co.uk",
+  "reuters.com",
+  "apnews.com",
+  "wikipedia.org",
+  "theguardian.com",
+  "aljazeera.com",
+  "dw.com",
+  "france24.com",
+  "gdacs.org",
+  "nhc.noaa.gov",
+  "noaa.gov",
+  "weather.gov",
+  "tsunami.gov",
+  "usgs.gov",
+  "spc.noaa.gov",
+]);
+
+function hostName(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function isPaywalledUrl(url) {
+  const host = hostName(url);
+  return PAYWALL_HOSTS.has(host) || [...PAYWALL_HOSTS].some((h) => host.endsWith(`.${h}`));
+}
+
+function isTechnicalDetailUrl(url) {
+  return (
+    /metoc\.navy\.mil\/jtwc/i.test(url) ||
+    /eonet\.gsfc\.nasa\.gov/i.test(url) ||
+    /web\.txt$/i.test(url)
+  );
+}
+
 function isReadableDetailUrl(url) {
   if (!url || typeof url !== "string") return false;
   try {
     const parsed = new URL(url);
+    if (isPaywalledUrl(url)) return false;
     if (API_URL_RE.test(url)) return false;
     if (parsed.hostname === "eonet.gsfc.nasa.gov" && url.includes("/api/")) return false;
     if (MACHINE_URL_RE.test(url)) return false;
@@ -112,12 +168,85 @@ function isReadableDetailUrl(url) {
   }
 }
 
+function isMainstreamFreeUrl(url) {
+  if (!isReadableDetailUrl(url) || isTechnicalDetailUrl(url)) return false;
+  const host = hostName(url);
+  if (MAINSTREAM_FREE_HOSTS.has(host)) return true;
+  return [...MAINSTREAM_FREE_HOSTS].some((h) => host === h || host.endsWith(`.${h}`));
+}
+
+function bbcNewsSearchUrl(query) {
+  return `https://www.bbc.co.uk/search?q=${encodeURIComponent(query)}&filter=news`;
+}
+
+function reutersSearchUrl(query) {
+  return `https://www.reuters.com/site-search/?query=${encodeURIComponent(query)}`;
+}
+
+function wikipediaSearchUrl(query) {
+  return `https://en.wikipedia.org/w/index.php?search=${encodeURIComponent(query)}`;
+}
+
+function peakStormIntensityKts(event) {
+  const trackPeak = (event.track || []).reduce((max, p) => Math.max(max, p.intensity || 0), 0);
+  return Math.max(trackPeak, event.intensity || 0);
+}
+
+function isMajorEvent(event) {
+  const title = event.title || "";
+  const lower = title.toLowerCase();
+
+  if (event.type === "hurricane") {
+    if (/tropical depression/i.test(title)) return false;
+    if (/super typhoon|major hurricane|typhoon|hurricane/i.test(title)) return true;
+    if (peakStormIntensityKts(event) >= 64) return true;
+  }
+
+  if (event.type === "earthquake") {
+    if ((event.magnitude || 0) >= 6) return true;
+    if ((event.felt || 0) >= 250) return true;
+  }
+
+  if (event.type === "tsunami") {
+    if (/warning|advisory/i.test(lower + (event.alertLevel || "").toLowerCase())) return true;
+  }
+
+  if (event.type === "volcano" && event.id?.startsWith("curated-")) return true;
+
+  if (event.type === "fire" && /mega|large|massive|record/i.test(lower)) return true;
+
+  return false;
+}
+
+function mainstreamCoverageUrl(event) {
+  const query = (event.title || "").trim();
+  if (!query) return null;
+
+  switch (event.type) {
+    case "hurricane":
+      if (event.id?.startsWith("nhc-") || event.source?.includes("NHC")) return null;
+      if (/typhoon|hurricane/i.test(query)) return bbcNewsSearchUrl(query);
+      return reutersSearchUrl(query);
+    case "earthquake":
+      if ((event.magnitude || 0) >= 6.5) return bbcNewsSearchUrl(query);
+      return reutersSearchUrl(query);
+    case "tsunami":
+      return bbcNewsSearchUrl(query);
+    case "volcano":
+      return wikipediaSearchUrl(query);
+    case "fire":
+      return bbcNewsSearchUrl(query);
+    default:
+      return bbcNewsSearchUrl(query);
+  }
+}
+
 function normalizeDetailUrl(url, type) {
   if (!url) return null;
-  if (isReadableDetailUrl(url)) return url;
+  if (isReadableDetailUrl(url) && !isTechnicalDetailUrl(url)) return url;
 
   if (/metoc\.navy\.mil\/jtwc\/products\/[a-z]{2}\d{4}\./i.test(url)) {
-    return url.replace(/\/([a-z]{2}\d{4})\.[^/]+$/i, "/$1web.txt");
+    return null;
   }
 
   if (/api\.weather\.gov\/alerts\//.test(url)) {
@@ -127,11 +256,24 @@ function normalizeDetailUrl(url, type) {
   return DETAIL_URL_FALLBACKS[type] || null;
 }
 
-function pickDetailUrl(type, ...candidates) {
+function pickEventDetailUrl(event, ...candidates) {
+  const type = event.type;
+
   for (const candidate of candidates) {
     const normalized = normalizeDetailUrl(candidate, type);
-    if (normalized) return normalized;
+    if (normalized && isMainstreamFreeUrl(normalized)) return normalized;
   }
+
+  if (isMajorEvent(event)) {
+    const coverage = mainstreamCoverageUrl(event);
+    if (coverage) return coverage;
+  }
+
+  for (const candidate of candidates) {
+    const normalized = normalizeDetailUrl(candidate, type);
+    if (normalized && !isPaywalledUrl(normalized)) return normalized;
+  }
+
   return DETAIL_URL_FALLBACKS[type] || null;
 }
 
@@ -243,7 +385,6 @@ function parseEonetEvent(ev, type, hours) {
       time,
       description,
       source: "NASA EONET",
-      url: pickDetailUrl(type, ...sourceUrls, ev.link),
     };
 
     if (type === "hurricane") {
@@ -251,6 +392,7 @@ function parseEonetEvent(ev, type, hours) {
       if (track.length >= 2) event.track = track;
     }
 
+    event.url = pickEventDetailUrl(event, ...sourceUrls, ev.link);
     return event;
   } catch {
     return null;
@@ -374,7 +516,14 @@ export async function fetchDisasters(hours = 24) {
   else errors.push("tsunamis");
 
   const hasVolcano = events.some((e) => e.type === "volcano");
-  if (!hasVolcano) events.push(...CURATED_VOLCANOES);
+  if (!hasVolcano) {
+    events.push(
+      ...CURATED_VOLCANOES.map((volcano) => ({
+        ...volcano,
+        url: pickEventDetailUrl(volcano, volcano.url),
+      }))
+    );
+  }
 
   events.sort((a, b) => (b.time || 0) - (a.time || 0));
   return { events, errors };
@@ -392,7 +541,7 @@ async function fetchEarthquakes(hours) {
   return (data.features || []).map((f) => {
     const [lon, lat] = f.geometry.coordinates;
     const p = f.properties;
-    return {
+    const event = {
       id: f.id,
       type: "earthquake",
       title: p.title || `M${p.mag} earthquake`,
@@ -400,11 +549,13 @@ async function fetchEarthquakes(hours) {
       lon,
       time: p.time,
       magnitude: p.mag,
+      felt: p.felt,
       description: `${p.title}. Magnitude ${p.mag}${p.felt ? `, felt by ${p.felt} people` : ""}.`,
       source: "USGS",
-      url: pickDetailUrl("earthquake", p.url),
       tsunami: p.tsunami === 1,
     };
+    event.url = pickEventDetailUrl(event, p.url);
+    return event;
   });
 }
 
@@ -454,7 +605,7 @@ async function fetchTornadoes(hours) {
       if (Number.isNaN(time) || !inWindow(time, hours)) continue;
 
       const place = [p.city, p.st].filter(Boolean).join(", ") || "Unknown location";
-      add({
+      const tornado = {
         id: `lsr-${p.product_id || p.valid}`,
         type: "tornado",
         title: `Tornado — ${place}`,
@@ -463,8 +614,9 @@ async function fetchTornadoes(hours) {
         time,
         description: `Tornado reported near ${place}${p.county ? ` (${p.county} County)` : ""}.`,
         source: "NWS Storm Report",
-        url: "https://www.spc.noaa.gov/climo/reports/",
-      });
+      };
+      tornado.url = pickEventDetailUrl(tornado, "https://www.spc.noaa.gov/climo/reports/");
+      add(tornado);
     }
   } else {
     console.warn("IEM tornado reports:", results[0].reason);
@@ -483,7 +635,7 @@ async function fetchTornadoes(hours) {
       const [lon, lat] = coords;
       const time = new Date(p.sent || p.effective || Date.now()).getTime();
 
-      add({
+      const tornado = {
         id: `nws-${p.id || p.sent}`,
         type: "tornado",
         title: p.headline || eventName,
@@ -492,8 +644,9 @@ async function fetchTornadoes(hours) {
         time,
         description: p.description || p.event || eventName,
         source: "NWS",
-        url: pickDetailUrl("tornado", p.id, "https://www.weather.gov/"),
-      });
+      };
+      tornado.url = pickEventDetailUrl(tornado, p.id, "https://www.weather.gov/");
+      add(tornado);
     }
   }
 
@@ -510,7 +663,7 @@ function parseNwsTsunamiFeature(feature, seen, events) {
   seen.add(id);
 
   const time = new Date(p.sent || p.effective || Date.now()).getTime();
-  events.push({
+  const tsunami = {
     id,
     type: "tsunami",
     title: p.headline || p.event || "Tsunami alert",
@@ -519,10 +672,11 @@ function parseNwsTsunamiFeature(feature, seen, events) {
     time,
     description: p.description || p.event || "Coastal tsunami alert",
     source: "NWS / NOAA",
-    url: pickDetailUrl("tsunami", p.id, "https://www.tsunami.gov/"),
     alertLevel: p.event,
     severity: p.severity,
-  });
+  };
+  tsunami.url = pickEventDetailUrl(tsunami, p.id, "https://www.tsunami.gov/");
+  events.push(tsunami);
 }
 
 async function fetchNwsTsunamiAlerts(hours, seen, events, { active }) {
@@ -570,7 +724,7 @@ async function fetchTsunamiAtomBulletins(hours, seen, events) {
     if (seen.has(key)) continue;
     seen.add(key);
 
-    events.push({
+    const tsunami = {
       id: bulletin.id,
       type: "tsunami",
       title: bulletin.title,
@@ -579,9 +733,10 @@ async function fetchTsunamiAtomBulletins(hours, seen, events) {
       time,
       description: bulletin.description,
       source: bulletin.source,
-      url: pickDetailUrl("tsunami", bulletin.url, "https://www.tsunami.gov/"),
       alertLevel: bulletin.category,
-    });
+    };
+    tsunami.url = pickEventDetailUrl(tsunami, bulletin.url, "https://www.tsunami.gov/");
+    events.push(tsunami);
   }
 }
 
@@ -607,25 +762,27 @@ async function fetchHurricanes() {
     return (data.activeStorms || []).map((s) => {
       const classification = s.classification || "Storm";
       const intensity = s.intensity ? `${s.intensity} kt` : "";
-      return {
+      const event = {
         id: `nhc-${s.id}`,
         type: "hurricane",
-        title: s.name || "Unnamed storm",
+        title: s.name ? `${classification} ${s.name}` : "Unnamed storm",
         lat: s.latitudeNumeric,
         lon: s.longitudeNumeric,
         time: s.lastUpdate ? new Date(s.lastUpdate).getTime() : Date.now(),
         description: `${classification} ${s.name}. ${intensity ? `Winds ${intensity}. ` : ""}Moving ${s.movementDir}° at ${s.movementSpeed} kt.`,
         source: "NOAA NHC",
-        url: pickDetailUrl(
-          "hurricane",
-          s.publicAdvisory?.url,
-          s.forecastGraphics?.url,
-          s.forecastDiscussion?.url,
-          "https://www.nhc.noaa.gov/"
-        ),
+        intensity: Number(s.intensity) || null,
         movementDir: s.movementDir,
         movementSpeed: s.movementSpeed,
       };
+      event.url = pickEventDetailUrl(
+        event,
+        s.publicAdvisory?.url,
+        s.forecastGraphics?.url,
+        s.forecastDiscussion?.url,
+        "https://www.nhc.noaa.gov/"
+      );
+      return event;
     });
   } catch {
     return [];
