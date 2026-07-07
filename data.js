@@ -200,6 +200,10 @@ function googleNewsSearchUrl(query) {
   return `https://news.google.com/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
 }
 
+function cycloneNewsQuery(title) {
+  return title.replace(/\bSuper\s+/gi, "").replace(/\s+/g, " ").trim();
+}
+
 function simplifyTornadoPlace(place) {
   return place
     .replace(/^\d+(\.\d+)?\s*(NE|NW|SE|SW|N|S|E|W)?\s*/i, "")
@@ -277,8 +281,8 @@ function mainstreamCoverageUrl(event) {
   switch (event.type) {
     case "hurricane":
       if (event.id?.startsWith("nhc-") || event.source?.includes("NHC")) return null;
-      if (/typhoon|hurricane/i.test(query)) return bbcNewsSearchUrl(query);
-      return reutersSearchUrl(query);
+      if (/typhoon|hurricane/i.test(query)) return bbcNewsSearchUrl(cycloneNewsQuery(query));
+      return reutersSearchUrl(cycloneNewsQuery(query));
     case "earthquake":
       if ((event.magnitude || 0) >= 6.5) return bbcNewsSearchUrl(query);
       return reutersSearchUrl(query);
