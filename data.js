@@ -11,7 +11,7 @@ export const DISASTER_TYPES = {
   hurricane: { label: "Hurricane", color: "#9ca3af" },
   fire: { label: "Wildfire", color: "#ff2d55" },
   flood: { label: "Flood", color: "#30d158" },
-  tornado: { label: "Tornado", color: "#f8fafc" },
+  tornado: { label: "Tornado report", color: "#f8fafc" },
   tsunami: { label: "Tsunami", color: "#5ac8fa" },
 };
 
@@ -572,91 +572,44 @@ async function fetchTornadoes(hours) {
   const events = [];
   const seen = new Set();
 
-  const add = (ev) => {
-    if (!Number.isFinite(ev.lat) || !Number.isFinite(ev.lon)) return;
-    const key = tornadoDedupeKey(ev.lat, ev.lon, ev.time || 0);
-    if (seen.has(key)) return;
+  const { sts, ets } = iemTimeRange(hours);
+  const url = `https://mesonet.agron.iastate.edu/geojson/lsr.geojson?sts=${sts}&ets=${ets}`;
+  const res = await fetchWithTimeout(url);
+  if (!res.ok) throw new Error(`IEM LSR ${res.status}`);
+  const data = await res.json();
+
+  for (const feature of data.features || []) {
+    const p = feature.properties;
+    // IEM LSR type "T" = NWS local storm report of a tornado (spotter, public, law enforcement).
+    // These are reports, not confirmed survey touchdowns or warning polygons.
+    if (p?.type !== "T") continue;
+
+    const lon = p.lon ?? feature.geometry?.coordinates?.[0];
+    const lat = p.lat ?? feature.geometry?.coordinates?.[1];
+    const time = new Date(p.valid).getTime();
+    if (Number.isNaN(time) || !inWindow(time, hours)) continue;
+
+    const key = tornadoDedupeKey(lat, lon, time);
+    if (seen.has(key)) continue;
     seen.add(key);
-    events.push(ev);
-  };
 
-  const parseIem = async () => {
-    const { sts, ets } = iemTimeRange(hours);
-    const url = `https://mesonet.agron.iastate.edu/geojson/lsr.geojson?sts=${sts}&ets=${ets}`;
-    const res = await fetchWithTimeout(url);
-    if (!res.ok) throw new Error(`IEM LSR ${res.status}`);
-    return res.json();
-  };
-
-  const parseNwsTornado = async (eventName) => {
-    const res = await fetchWithTimeout(
-      `https://api.weather.gov/alerts/active?event=${encodeURIComponent(eventName)}`
-    );
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.features || []).map((feature) => ({ feature, eventName }));
-  };
-
-  const results = await Promise.allSettled([
-    parseIem(),
-    parseNwsTornado("Tornado Warning"),
-    parseNwsTornado("Tornado Watch"),
-  ]);
-
-  if (results[0].status === "fulfilled") {
-    for (const feature of results[0].value.features || []) {
-      const p = feature.properties;
-      if (p?.type !== "T") continue;
-
-      const lon = p.lon ?? feature.geometry?.coordinates?.[0];
-      const lat = p.lat ?? feature.geometry?.coordinates?.[1];
-      const time = new Date(p.valid).getTime();
-      if (Number.isNaN(time) || !inWindow(time, hours)) continue;
-
-      const place = [p.city, p.st].filter(Boolean).join(", ") || "Unknown location";
-      const tornado = {
-        id: `lsr-${p.product_id || p.valid}`,
-        type: "tornado",
-        title: `Tornado — ${place}`,
-        lat,
-        lon,
-        time,
-        description: `Tornado reported near ${place}${p.county ? ` (${p.county} County)` : ""}.`,
-        source: "NWS Storm Report",
-      };
-      tornado.url = pickEventDetailUrl(tornado, "https://www.spc.noaa.gov/climo/reports/");
-      add(tornado);
-    }
-  } else {
-    console.warn("IEM tornado reports:", results[0].reason);
-  }
-
-  for (let i = 1; i < results.length; i++) {
-    const result = results[i];
-    if (result.status !== "fulfilled") {
-      console.warn("NWS tornado alerts:", result.reason);
-      continue;
-    }
-    for (const { feature, eventName } of result.value) {
-      const p = feature.properties || {};
-      const coords = geometryCentroid(feature.geometry);
-      if (!coords) continue;
-      const [lon, lat] = coords;
-      const time = new Date(p.sent || p.effective || Date.now()).getTime();
-
-      const tornado = {
-        id: `nws-${p.id || p.sent}`,
-        type: "tornado",
-        title: p.headline || eventName,
-        lat,
-        lon,
-        time,
-        description: p.description || p.event || eventName,
-        source: "NWS",
-      };
-      tornado.url = pickEventDetailUrl(tornado, p.id, "https://www.weather.gov/");
-      add(tornado);
-    }
+    const place = [p.city, p.st].filter(Boolean).join(", ") || "Unknown location";
+    const county = p.county ? ` (${p.county} County)` : "";
+    const remark = typeof p.remark === "string" ? p.remark.trim() : "";
+    const tornado = {
+      id: `lsr-${p.product_id || p.valid}`,
+      type: "tornado",
+      title: `Tornado report — ${place}`,
+      lat,
+      lon,
+      time,
+      description: remark
+        ? `NWS local storm report near ${place}${county}. ${remark}`
+        : `NWS local storm report of a tornado near ${place}${county}.`,
+      source: "NWS Local Storm Report",
+    };
+    tornado.url = pickEventDetailUrl(tornado, "https://www.spc.noaa.gov/climo/reports/");
+    events.push(tornado);
   }
 
   return events;
