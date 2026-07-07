@@ -114,6 +114,9 @@ const PAYWALL_HOSTS = new Set([
   "theatlantic.com",
 ]);
 
+/** Government or agency pages that require authentication in a normal browser. */
+const GATED_HOSTS = new Set(["irwin.doi.gov"]);
+
 const MAINSTREAM_FREE_HOSTS = new Set([
   "bbc.com",
   "bbc.co.uk",
@@ -146,11 +149,17 @@ function isPaywalledUrl(url) {
   return PAYWALL_HOSTS.has(host) || [...PAYWALL_HOSTS].some((h) => host.endsWith(`.${h}`));
 }
 
+function isGatedDetailUrl(url) {
+  const host = hostName(url);
+  return GATED_HOSTS.has(host) || [...GATED_HOSTS].some((h) => host === h || host.endsWith(`.${h}`));
+}
+
 function isTechnicalDetailUrl(url) {
   return (
     /metoc\.navy\.mil\/jtwc/i.test(url) ||
-    /eonet\.gsfc\.nasa\.gov/i.test(url) ||
-    /web\.txt$/i.test(url)
+    /eonet\.gsfc\.nasa.gov/i.test(url) ||
+    /web\.txt$/i.test(url) ||
+    isGatedDetailUrl(url)
   );
 }
 
@@ -158,7 +167,7 @@ function isReadableDetailUrl(url) {
   if (!url || typeof url !== "string") return false;
   try {
     const parsed = new URL(url);
-    if (isPaywalledUrl(url)) return false;
+    if (isPaywalledUrl(url) || isGatedDetailUrl(url)) return false;
     if (API_URL_RE.test(url)) return false;
     if (parsed.hostname === "eonet.gsfc.nasa.gov" && url.includes("/api/")) return false;
     if (MACHINE_URL_RE.test(url)) return false;
@@ -211,6 +220,23 @@ function confirmedTornadoNewsQuery(event) {
 function confirmedTornadoNewsUrl(event) {
   const query = confirmedTornadoNewsQuery(event);
   return query ? googleNewsSearchUrl(query) : null;
+}
+
+function wildfireNewsQuery(event) {
+  const title = (event.title || "").trim();
+  if (!title) return "";
+  const stripped = title.replace(/^Wildfire\s+/i, "").replace(/,/g, " ");
+  return `${stripped} wildfire`.replace(/\s+/g, " ").trim();
+}
+
+function wildfireCoverageUrl(event) {
+  const query = wildfireNewsQuery(event);
+  return query ? googleNewsSearchUrl(query) : null;
+}
+
+function wildfireFirmsMapUrl(event) {
+  if (!Number.isFinite(event.lat) || !Number.isFinite(event.lon)) return null;
+  return `https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;@${event.lon.toFixed(4)},${event.lat.toFixed(4)},10}z`;
 }
 
 function peakStormIntensityKts(event) {
@@ -297,6 +323,13 @@ function pickEventDetailUrl(event, ...candidates) {
   if (event.type === "tornado" && event.confirmed) {
     const news = confirmedTornadoNewsUrl(event);
     if (news) return news;
+  }
+
+  if (event.type === "fire") {
+    const news = wildfireCoverageUrl(event);
+    if (news) return news;
+    const firms = wildfireFirmsMapUrl(event);
+    if (firms) return firms;
   }
 
   for (const candidate of candidates) {
