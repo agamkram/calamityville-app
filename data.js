@@ -187,6 +187,32 @@ function wikipediaSearchUrl(query) {
   return `https://en.wikipedia.org/w/index.php?search=${encodeURIComponent(query)}`;
 }
 
+function googleNewsSearchUrl(query) {
+  return `https://news.google.com/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
+}
+
+function simplifyTornadoPlace(place) {
+  return place
+    .replace(/^\d+(\.\d+)?\s*(NE|NW|SE|SW|N|S|E|W)?\s*/i, "")
+    .replace(/,/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function confirmedTornadoNewsQuery(event) {
+  const titlePlace = event.title?.replace(/^Confirmed tornado — (?:EF\d+ — )?/i, "").trim();
+  const rawPlace = [event.city, event.st].filter(Boolean).join(", ") || titlePlace || "";
+  const place = simplifyTornadoPlace(rawPlace);
+  const county = event.county ? `${event.county} County` : "";
+  const ef = event.efRating != null ? `EF-${event.efRating}` : "";
+  return [place, county, ef, "tornado", "confirmed"].filter(Boolean).join(" ");
+}
+
+function confirmedTornadoNewsUrl(event) {
+  const query = confirmedTornadoNewsQuery(event);
+  return query ? googleNewsSearchUrl(query) : null;
+}
+
 function peakStormIntensityKts(event) {
   const trackPeak = (event.track || []).reduce((max, p) => Math.max(max, p.intensity || 0), 0);
   return Math.max(trackPeak, event.intensity || 0);
@@ -267,6 +293,11 @@ function isOfficialUrlForEvent(url, event) {
 
 function pickEventDetailUrl(event, ...candidates) {
   const type = event.type;
+
+  if (event.type === "tornado" && event.confirmed) {
+    const news = confirmedTornadoNewsUrl(event);
+    if (news) return news;
+  }
 
   for (const candidate of candidates) {
     const normalized = normalizeDetailUrl(candidate);
@@ -557,6 +588,9 @@ function buildConfirmedTornadoEvent(cluster) {
     confirmed: true,
     efRating: efRating >= 0 ? efRating : null,
     title,
+    city: latest.city,
+    st: latest.st,
+    county: latest.county,
     lat: latest.lat,
     lon: latest.lon,
     time: latest.time,
