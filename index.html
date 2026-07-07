@@ -223,6 +223,16 @@
       background: radial-gradient(circle at center, #ff2d55 0 60%, #f8fafc 61%);
     }
 
+    .legend-dot--tornado-confirmed {
+      background: radial-gradient(circle at center, #f8fafc 0 60%, #ff2d55 61%);
+    }
+
+    .legend-tornado-key {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.2rem;
+    }
+
     #event-count {
       position: absolute;
       bottom: max(0.75rem, env(safe-area-inset-bottom));
@@ -420,7 +430,10 @@
             <span class="legend-dot" style="background:#30d158"></span>Flood
           </button>
           <button type="button" class="legend-item active" data-type="tornado" aria-pressed="true">
-            <span class="legend-dot legend-dot--tornado"></span>Tornado report
+            <span class="legend-tornado-key" aria-hidden="true">
+              <span class="legend-dot legend-dot--tornado"></span>
+              <span class="legend-dot legend-dot--tornado-confirmed"></span>
+            </span>Tornado
           </button>
           <button type="button" class="legend-item active" data-type="tsunami" aria-pressed="true">
             <span class="legend-dot" style="background:#5ac8fa"></span>Tsunami

@@ -483,6 +483,121 @@ function tornadoDedupeKey(lat, lon, timeMs) {
   return `${lat.toFixed(1)},${lon.toFixed(1)},${Math.floor(timeMs / 3_600_000)}`;
 }
 
+const TORNADO_CLUSTER_MAX_DEG = 0.45;
+const TORNADO_CLUSTER_MAX_MS = 4 * 3_600_000;
+
+function parseLsrTornadoConfirmation(remark) {
+  const text = (remark || "").trim();
+  if (!text) return { confirmed: false, efRating: null };
+
+  const efMatch = text.match(/\bEF\s*-?\s*([0-5])\b/i);
+  const efRating = efMatch ? Number(efMatch[1]) : null;
+  const nwsSurvey = /nws survey/i.test(text);
+  const confirmed =
+    (nwsSurvey && /confirm/i.test(text)) ||
+    (efRating != null && (nwsSurvey || /rated\s+EF/i.test(text)));
+
+  return { confirmed, efRating };
+}
+
+function tornadoClusterDistance(a, b) {
+  return Math.hypot(a.lat - b.lat, a.lon - b.lon);
+}
+
+function tornadoPointsClusterable(a, b) {
+  return (
+    tornadoClusterDistance(a, b) <= TORNADO_CLUSTER_MAX_DEG &&
+    Math.abs(a.time - b.time) <= TORNADO_CLUSTER_MAX_MS
+  );
+}
+
+function clusterTornadoPoints(points) {
+  const clusters = points.map((point) => [point]);
+
+  let merged = true;
+  while (merged) {
+    merged = false;
+    for (let i = 0; i < clusters.length; i++) {
+      for (let j = i + 1; j < clusters.length; j++) {
+        const linked = clusters[i].some((a) => clusters[j].some((b) => tornadoPointsClusterable(a, b)));
+        if (!linked) continue;
+        clusters[i] = clusters[i].concat(clusters[j]);
+        clusters.splice(j, 1);
+        merged = true;
+        break;
+      }
+      if (merged) break;
+    }
+  }
+
+  return clusters;
+}
+
+function buildConfirmedTornadoEvent(cluster) {
+  const confirmedPoints = cluster.filter((point) => point.confirmed);
+  if (!confirmedPoints.length) return null;
+
+  const track = [...cluster].sort((a, b) => a.time - b.time);
+  const latest = track[track.length - 1];
+  const efRating = confirmedPoints.reduce(
+    (peak, point) => Math.max(peak, point.efRating ?? -1),
+    -1
+  );
+  const efLabel = efRating >= 0 ? `EF${efRating}` : null;
+  const place = [latest.city, latest.st].filter(Boolean).join(", ") || "Unknown location";
+  const county = latest.county ? ` (${latest.county} County)` : "";
+  const surveyRemark = confirmedPoints.find((point) => point.remark)?.remark || "";
+  const title = efLabel
+    ? `Confirmed tornado — ${efLabel} — ${place}`
+    : `Confirmed tornado — ${place}`;
+
+  const event = {
+    id: `lsr-confirmed-${latest.productId || latest.time}`,
+    type: "tornado",
+    confirmed: true,
+    efRating: efRating >= 0 ? efRating : null,
+    title,
+    lat: latest.lat,
+    lon: latest.lon,
+    time: latest.time,
+    description: surveyRemark
+      ? `NWS damage survey near ${place}${county}. ${surveyRemark}`
+      : `NWS-confirmed tornado near ${place}${county}.`,
+    source: "NWS Damage Survey",
+  };
+
+  if (track.length >= 2) {
+    event.track = track.map((point) => ({
+      lat: point.lat,
+      lon: point.lon,
+      time: point.time,
+    }));
+  }
+
+  event.url = pickEventDetailUrl(event, "https://www.spc.noaa.gov/climo/reports/");
+  return event;
+}
+
+function buildTornadoReportEvent(point) {
+  const place = [point.city, point.st].filter(Boolean).join(", ") || "Unknown location";
+  const county = point.county ? ` (${point.county} County)` : "";
+  const event = {
+    id: `lsr-${point.productId || point.time}`,
+    type: "tornado",
+    confirmed: false,
+    title: `Tornado report — ${place}`,
+    lat: point.lat,
+    lon: point.lon,
+    time: point.time,
+    description: point.remark
+      ? `NWS local storm report near ${place}${county}. ${point.remark}`
+      : `NWS local storm report of a tornado near ${place}${county}.`,
+    source: "NWS Local Storm Report",
+  };
+  event.url = pickEventDetailUrl(event, "https://www.spc.noaa.gov/climo/reports/");
+  return event;
+}
+
 function tsunamiDedupeKey(lat, lon, timeMs) {
   return `${lat.toFixed(2)},${lon.toFixed(2)},${Math.floor((timeMs || 0) / 1_800_000)}`;
 }
@@ -570,7 +685,8 @@ async function fetchEarthquakes(hours) {
 
 async function fetchTornadoes(hours) {
   const events = [];
-  const seen = new Set();
+  const reportSeen = new Set();
+  const points = [];
 
   const { sts, ets } = iemTimeRange(hours);
   const url = `https://mesonet.agron.iastate.edu/geojson/lsr.geojson?sts=${sts}&ets=${ets}`;
@@ -580,36 +696,43 @@ async function fetchTornadoes(hours) {
 
   for (const feature of data.features || []) {
     const p = feature.properties;
-    // IEM LSR type "T" = NWS local storm report of a tornado (spotter, public, law enforcement).
-    // These are reports, not confirmed survey touchdowns or warning polygons.
     if (p?.type !== "T") continue;
 
     const lon = p.lon ?? feature.geometry?.coordinates?.[0];
     const lat = p.lat ?? feature.geometry?.coordinates?.[1];
     const time = new Date(p.valid).getTime();
     if (Number.isNaN(time) || !inWindow(time, hours)) continue;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
 
-    const key = tornadoDedupeKey(lat, lon, time);
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    const place = [p.city, p.st].filter(Boolean).join(", ") || "Unknown location";
-    const county = p.county ? ` (${p.county} County)` : "";
     const remark = typeof p.remark === "string" ? p.remark.trim() : "";
-    const tornado = {
-      id: `lsr-${p.product_id || p.valid}`,
-      type: "tornado",
-      title: `Tornado report — ${place}`,
+    const { confirmed, efRating } = parseLsrTornadoConfirmation(remark);
+    points.push({
       lat,
       lon,
       time,
-      description: remark
-        ? `NWS local storm report near ${place}${county}. ${remark}`
-        : `NWS local storm report of a tornado near ${place}${county}.`,
-      source: "NWS Local Storm Report",
-    };
-    tornado.url = pickEventDetailUrl(tornado, "https://www.spc.noaa.gov/climo/reports/");
-    events.push(tornado);
+      remark,
+      confirmed,
+      efRating,
+      city: p.city,
+      st: p.st,
+      county: p.county,
+      productId: p.product_id || p.valid,
+    });
+  }
+
+  for (const cluster of clusterTornadoPoints(points)) {
+    const confirmed = buildConfirmedTornadoEvent(cluster);
+    if (confirmed) {
+      events.push(confirmed);
+      continue;
+    }
+
+    for (const point of cluster) {
+      const key = tornadoDedupeKey(point.lat, point.lon, point.time);
+      if (reportSeen.has(key)) continue;
+      reportSeen.add(key);
+      events.push(buildTornadoReportEvent(point));
+    }
   }
 
   return events;

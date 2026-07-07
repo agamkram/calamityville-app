@@ -45,6 +45,7 @@ const SUN_FRAGMENT_SHADER = `
 const PIN_ALTITUDE = 0.012;
 const TRACK_ALTITUDE = 0.008;
 const TRACK_LINE_WIDTH = 2;
+const TORNADO_TRACK_LINE_WIDTH = 1;
 const PIN_RADIUS = 0.0065;
 const PIN_HIT_SCALE = 2.5;
 const PIN_RADIUS_TSUNAMI = 0.0085;
@@ -100,6 +101,7 @@ let scene, camera, renderer, controls;
 let earthGroup, moonGroup, moonMesh, moonEarthshine, sunGroup, sunMesh, sunLight, fillLight, pinsGroup, tracksGroup;
 let pinGeometry, pinGeometryTsunami, pinHitGeometry, pinHitGeometryTsunami, pinMaterials, pinHitMaterial;
 let trackLineMaterial;
+let tornadoTrackLineMaterial;
 let moonLodLevel = "low";
 let moonHqPromise = null;
 let sunLodLevel = "low";
@@ -371,7 +373,7 @@ function createEarth() {
   }
 }
 
-function createTornadoPinTexture() {
+function createTornadoPinTexture({ confirmed = false } = {}) {
   const size = 64;
   const el = document.createElement("canvas");
   el.width = size;
@@ -380,15 +382,17 @@ function createTornadoPinTexture() {
   const cx = size / 2;
   const outerR = size / 2 - 1;
   const innerR = outerR * PIN_TORNADO_CORE_RATIO;
+  const outerColor = confirmed ? "#ff2d55" : "#f8fafc";
+  const innerColor = confirmed ? "#f8fafc" : "#ff2d55";
 
   ctx.beginPath();
   ctx.arc(cx, cx, outerR, 0, Math.PI * 2);
-  ctx.fillStyle = "#f8fafc";
+  ctx.fillStyle = outerColor;
   ctx.fill();
 
   ctx.beginPath();
   ctx.arc(cx, cx, innerR, 0, Math.PI * 2);
-  ctx.fillStyle = "#ff2d55";
+  ctx.fillStyle = innerColor;
   ctx.fill();
 
   const tex = new THREE.CanvasTexture(el);
@@ -405,10 +409,19 @@ function initTrackAssets() {
     depthTest: true,
     worldUnits: false,
   });
+  tornadoTrackLineMaterial = new LineMaterial({
+    color: 0xff2d55,
+    linewidth: TORNADO_TRACK_LINE_WIDTH,
+    transparent: true,
+    opacity: 0.75,
+    depthTest: true,
+    worldUnits: false,
+  });
 }
 
 function updateTrackLineResolution(width, height) {
   trackLineMaterial?.resolution.set(width, height);
+  tornadoTrackLineMaterial?.resolution.set(width, height);
 }
 
 function initPinAssets() {
@@ -434,6 +447,12 @@ function initPinAssets() {
     }),
     tornado: new THREE.SpriteMaterial({
       map: createTornadoPinTexture(),
+      transparent: true,
+      depthTest: true,
+      depthWrite: true,
+    }),
+    tornadoConfirmed: new THREE.SpriteMaterial({
+      map: createTornadoPinTexture({ confirmed: true }),
       transparent: true,
       depthTest: true,
       depthWrite: true,
@@ -582,9 +601,9 @@ function clearTracks() {
   trackMeshes = [];
 }
 
-function createTrack(event) {
+function createTrackLine(event, material) {
   const track = event.track;
-  if (!track || track.length < 2 || !trackLineMaterial) return;
+  if (!track || track.length < 2 || !material) return;
 
   const positions = new Float32Array(track.length * 3);
   for (let i = 0; i < track.length; i++) {
@@ -597,11 +616,19 @@ function createTrack(event) {
   const geometry = new LineGeometry();
   geometry.setPositions(positions);
 
-  const line = new Line2(geometry, trackLineMaterial);
+  const line = new Line2(geometry, material);
   line.computeLineDistances();
   line.userData.event = event;
   tracksGroup.add(line);
   trackMeshes.push(line);
+}
+
+function createTrack(event) {
+  createTrackLine(event, trackLineMaterial);
+}
+
+function createTornadoTrack(event) {
+  createTrackLine(event, tornadoTrackLineMaterial);
 }
 
 function createPin(event) {
@@ -615,7 +642,8 @@ function createPin(event) {
   const geo = tsunamiPin ? pinGeometryTsunami : pinGeometry;
 
   if (event.type === "tornado") {
-    const sprite = new THREE.Sprite(pinMaterials.tornado);
+    const spriteMat = event.confirmed ? pinMaterials.tornadoConfirmed : pinMaterials.tornado;
+    const sprite = new THREE.Sprite(spriteMat);
     const pinDiameter = PIN_RADIUS * 2;
     sprite.scale.set(pinDiameter, pinDiameter, 1);
     root.add(sprite);
@@ -652,10 +680,12 @@ function applyPinFilter() {
   clearPins();
   clearTracks();
   const visible = allEvents.filter((ev) => activeTypes.has(ev.type));
-  const showTracks = activeTypes.has("hurricane");
+  const showHurricaneTracks = activeTypes.has("hurricane");
+  const showTornadoes = activeTypes.has("tornado");
   for (const ev of visible) {
     if (Number.isFinite(ev.lat) && Number.isFinite(ev.lon)) createPin(ev);
-    if (showTracks && ev.type === "hurricane") createTrack(ev);
+    if (showHurricaneTracks && ev.type === "hurricane") createTrack(ev);
+    if (showTornadoes && ev.type === "tornado" && ev.confirmed) createTornadoTrack(ev);
   }
   updateEventCount(visible.length, allEvents.length);
 }
@@ -681,7 +711,13 @@ function toggleLegendType(type) {
 }
 
 function showEventSheet(event) {
-  const typeInfo = DISASTER_TYPES[event.type] || { label: "Event", color: "#fff" };
+  let typeInfo = DISASTER_TYPES[event.type] || { label: "Event", color: "#fff" };
+  if (event.type === "tornado" && event.confirmed) {
+    typeInfo = {
+      label: event.efRating != null ? `Confirmed tornado · EF${event.efRating}` : "Confirmed tornado",
+      color: "#ff2d55",
+    };
+  }
   sheetTypeEl.textContent = typeInfo.label;
   sheetTypeEl.style.color = typeInfo.color;
   sheetTitleEl.textContent = event.title;
@@ -890,9 +926,11 @@ export function destroyGlobe() {
   pinHitMaterial?.dispose();
   if (pinMaterials) {
     pinMaterials.tornado?.map?.dispose();
+    pinMaterials.tornadoConfirmed?.map?.dispose();
     for (const mat of Object.values(pinMaterials)) mat.dispose();
   }
   trackLineMaterial?.dispose();
+  tornadoTrackLineMaterial?.dispose();
 
   controls?.dispose();
   renderer?.dispose();
