@@ -241,7 +241,7 @@ function mainstreamCoverageUrl(event) {
   }
 }
 
-function normalizeDetailUrl(url, type) {
+function normalizeDetailUrl(url) {
   if (!url) return null;
   if (isReadableDetailUrl(url) && !isTechnicalDetailUrl(url)) return url;
 
@@ -253,15 +253,24 @@ function normalizeDetailUrl(url, type) {
     return "https://www.weather.gov/";
   }
 
-  return DETAIL_URL_FALLBACKS[type] || null;
+  return null;
+}
+
+function isOfficialUrlForEvent(url, event) {
+  if (!isMainstreamFreeUrl(url)) return false;
+  const host = hostName(url);
+  if (host === "nhc.noaa.gov" || host.endsWith(".nhc.noaa.gov")) {
+    return event.id?.startsWith("nhc-") || event.source?.includes("NHC");
+  }
+  return true;
 }
 
 function pickEventDetailUrl(event, ...candidates) {
   const type = event.type;
 
   for (const candidate of candidates) {
-    const normalized = normalizeDetailUrl(candidate, type);
-    if (normalized && isMainstreamFreeUrl(normalized)) return normalized;
+    const normalized = normalizeDetailUrl(candidate);
+    if (normalized && isOfficialUrlForEvent(normalized, event)) return normalized;
   }
 
   if (isMajorEvent(event)) {
@@ -270,7 +279,7 @@ function pickEventDetailUrl(event, ...candidates) {
   }
 
   for (const candidate of candidates) {
-    const normalized = normalizeDetailUrl(candidate, type);
+    const normalized = normalizeDetailUrl(candidate);
     if (normalized && !isPaywalledUrl(normalized)) return normalized;
   }
 
