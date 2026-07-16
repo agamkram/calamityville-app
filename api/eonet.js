@@ -1,6 +1,6 @@
 /** Same-origin proxy for NASA EONET (avoids browser fetch quirks). */
 export default async function handler(req, res) {
-  const days = Math.min(3, Math.max(1, Number(req.query.days) || 1));
+  const days = Math.min(10, Math.max(1, Number(req.query.days) || 1));
   const url = `https://eonet.gsfc.nasa.gov/api/v3/events?days=${days}`;
 
   try {

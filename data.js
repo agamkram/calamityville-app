@@ -1,9 +1,15 @@
 /**
- * Disaster data — fetches and normalizes events from USGS, NOAA, and NASA EONET.
+ * Disaster data — fetches and normalizes events from USGS, NOAA, NASA EONET,
+ * and CIFFC/NRCan active Canadian wildfires.
  */
 
 /** USGS minimum magnitude — was 4.5; 3.0 surfaces more felt quakes without flooding the globe. */
 const EARTHQUAKE_MIN_MAGNITUDE = 2.5;
+
+/** Drop stale agency rows still marked active (e.g. prior-season ghosts). */
+const CANADA_FIRE_MAX_AGE_DAYS = 90;
+/** Keep small monitoring pins out of the globe unless they started inside the UI window. */
+const CANADA_FIRE_MIN_HECTARES = 10;
 
 export const DISASTER_TYPES = {
   earthquake: { label: "Earthquake", color: "#ff9f0a" },
@@ -90,11 +96,84 @@ const DETAIL_URL_FALLBACKS = {
   earthquake: "https://earthquake.usgs.gov/",
   volcano: "https://www.usgs.gov/programs/VHP",
   hurricane: "https://www.nhc.noaa.gov/",
-  fire: "https://www.nifc.gov/",
+  fire: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
   flood: "https://www.weather.gov/safety/flood",
   tornado: "https://www.spc.noaa.gov/climo/reports/",
   tsunami: "https://www.tsunami.gov/",
 };
+
+/** Free public agency / national pages (no login, no paywall). */
+const CANADA_AGENCY_META = {
+  BC: {
+    label: "British Columbia",
+    url: "https://wildfiresituation.nrs.gov.bc.ca/map",
+  },
+  AB: { label: "Alberta", url: "https://www.alberta.ca/wildfire-status" },
+  SK: {
+    label: "Saskatchewan",
+    url: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
+  },
+  MB: {
+    label: "Manitoba",
+    url: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
+  },
+  ON: { label: "Ontario", url: "https://www.ontario.ca/page/forest-fires" },
+  QC: { label: "Quebec", url: "https://sopfeu.qc.ca/" },
+  NB: {
+    label: "New Brunswick",
+    url: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
+  },
+  NS: {
+    label: "Nova Scotia",
+    url: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
+  },
+  NL: {
+    label: "Newfoundland and Labrador",
+    url: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
+  },
+  PE: {
+    label: "Prince Edward Island",
+    url: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
+  },
+  YT: {
+    label: "Yukon",
+    url: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
+  },
+  NT: {
+    label: "Northwest Territories",
+    url: "https://www.gov.nt.ca/ecc/en/services/wildfire-update",
+  },
+  NU: {
+    label: "Nunavut",
+    url: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
+  },
+  PC: {
+    label: "Parks Canada",
+    url: "https://parks.canada.ca/nature/science/conservation/feu-fire",
+  },
+};
+
+const CANADA_STAGE_LABELS = {
+  OC: "Out of control",
+  BH: "Being held",
+  UC: "Under control",
+  EX: "Extinguished",
+};
+
+const CANADA_RESPONSE_LABELS = {
+  FUL: "Full response",
+  MOD: "Modified response",
+  MON: "Monitoring",
+};
+
+const CANADA_FIRES_ARCGIS_URL =
+  "https://services.arcgis.com/wjcPoefzjpzCgffS/arcgis/rest/services/activefires/FeatureServer/0/query" +
+  "?where=1%3D1" +
+  "&outFields=Agency,Fire_Name,Latitude,Longitude,Start_Date,Hectares__Ha_,Stage_of_Control,response_type,ObjectId" +
+  "&returnGeometry=true" +
+  "&outSR=4326" +
+  "&f=json" +
+  "&resultRecordCount=2000";
 
 const MACHINE_URL_RE = /\.(xml|rss|atom|geojson|tcw|kmz|kml|zip|json)(\?|$)/i;
 const API_URL_RE = /\/api\/|api\.weather\.gov\/alerts\//i;
@@ -134,6 +213,19 @@ const MAINSTREAM_FREE_HOSTS = new Set([
   "tsunami.gov",
   "usgs.gov",
   "spc.noaa.gov",
+  "cwfis.cfs.nrcan.gc.ca",
+  "nrcan.gc.ca",
+  "ciffc.net",
+  "ciffc.ca",
+  "alberta.ca",
+  "ontario.ca",
+  "sopfeu.qc.ca",
+  "gov.nt.ca",
+  "parks.canada.ca",
+  "pc.gc.ca",
+  "nrs.gov.bc.ca",
+  "gov.bc.ca",
+  "firms.modaps.eosdis.nasa.gov",
 ]);
 
 function hostName(url) {
@@ -226,7 +318,26 @@ function confirmedTornadoNewsUrl(event) {
   return query ? googleNewsSearchUrl(query) : null;
 }
 
+function canadaAgencyLabel(code) {
+  return CANADA_AGENCY_META[code]?.label || code || "Canada";
+}
+
+function humanizeCanadaFireName(rawName, agency) {
+  if (!rawName) return "";
+  let name = String(rawName).trim();
+  name = name.replace(/^\d{4}_[A-Z]{2}_/i, "");
+  name = name.replace(/^\d{4}_/i, "");
+  if (agency) name = name.replace(new RegExp(`^${agency}_`, "i"), "");
+  name = name.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+  return name;
+}
+
 function wildfireNewsQuery(event) {
+  if (event.canadaAgency) {
+    const place = canadaAgencyLabel(event.canadaAgency);
+    const shortName = humanizeCanadaFireName(event.fireName || event.title, event.canadaAgency);
+    return [place, "wildfire", shortName].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  }
   const title = (event.title || "").trim();
   if (!title) return "";
   const stripped = title.replace(/^Wildfire\s+/i, "").replace(/,/g, " ");
@@ -240,7 +351,50 @@ function wildfireCoverageUrl(event) {
 
 function wildfireFirmsMapUrl(event) {
   if (!Number.isFinite(event.lat) || !Number.isFinite(event.lon)) return null;
-  return `https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;@${event.lon.toFixed(4)},${event.lat.toFixed(4)},10}z`;
+  return `https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;@${event.lon.toFixed(4)},${event.lat.toFixed(4)},10z`;
+}
+
+function canadaAgencyStatusUrl(event) {
+  const code = event.canadaAgency;
+  if (!code) return null;
+  return CANADA_AGENCY_META[code]?.url || "https://cwfis.cfs.nrcan.gc.ca/interactive-map";
+}
+
+function canadaCwfisMapUrl() {
+  return "https://cwfis.cfs.nrcan.gc.ca/interactive-map";
+}
+
+/** Prefer free government pages; avoid paywalled news; FIRMS map last for non-Canada. */
+function pickWildfireDetailUrl(event, ...candidates) {
+  if (event.canadaAgency) {
+    const agencyUrl = canadaAgencyStatusUrl(event);
+    if (agencyUrl) return agencyUrl;
+
+    if ((event.hectares || 0) >= 1000) {
+      const news = wildfireCoverageUrl(event);
+      if (news) return news;
+    }
+
+    return canadaCwfisMapUrl();
+  }
+
+  for (const candidate of candidates) {
+    const normalized = normalizeDetailUrl(candidate);
+    if (normalized && isOfficialUrlForEvent(normalized, event)) return normalized;
+  }
+
+  const news = wildfireCoverageUrl(event);
+  if (news) return news;
+
+  const firms = wildfireFirmsMapUrl(event);
+  if (firms) return firms;
+
+  for (const candidate of candidates) {
+    const normalized = normalizeDetailUrl(candidate);
+    if (normalized && !isPaywalledUrl(normalized)) return normalized;
+  }
+
+  return DETAIL_URL_FALLBACKS.fire;
 }
 
 function peakStormIntensityKts(event) {
@@ -269,7 +423,10 @@ function isMajorEvent(event) {
 
   if (event.type === "volcano" && event.id?.startsWith("curated-")) return true;
 
-  if (event.type === "fire" && /mega|large|massive|record/i.test(lower)) return true;
+  if (event.type === "fire") {
+    if ((event.hectares || 0) >= 1000) return true;
+    if (/mega|large|massive|record/i.test(lower)) return true;
+  }
 
   return false;
 }
@@ -330,10 +487,7 @@ function pickEventDetailUrl(event, ...candidates) {
   }
 
   if (event.type === "fire") {
-    const news = wildfireCoverageUrl(event);
-    if (news) return news;
-    const firms = wildfireFirmsMapUrl(event);
-    if (firms) return firms;
+    return pickWildfireDetailUrl(event, ...candidates);
   }
 
   for (const candidate of candidates) {
@@ -435,7 +589,8 @@ function latestGeometry(geometries, hours, { ongoing = false } = {}) {
 
 function parseEonetEvent(ev, type, hours) {
   try {
-    const ongoing = type === "hurricane" && !ev.closed;
+    // Open wildfires keep burning after the first geometry date — treat like active storms.
+    const ongoing = (type === "hurricane" || type === "fire") && !ev.closed;
     const geom = latestGeometry(ev.geometry, hours, { ongoing });
     if (!geom) return null;
 
@@ -477,10 +632,11 @@ function parseEonetEvent(ev, type, hours) {
 }
 
 async function fetchEonetJson(days) {
-  const urls = [`https://eonet.gsfc.nasa.gov/api/v3/events?days=${days}`];
-  if (typeof window !== "undefined") {
-    urls.push(`/api/eonet?days=${days}`);
-  }
+  const direct = `https://eonet.gsfc.nasa.gov/api/v3/events?days=${days}`;
+  const urls =
+    typeof window !== "undefined"
+      ? [`/api/eonet?days=${days}`, direct]
+      : [direct];
 
   let lastError;
   for (const url of urls) {
@@ -673,14 +829,132 @@ function tsunamiDedupeKey(lat, lon, timeMs) {
   return `${lat.toFixed(2)},${lon.toFixed(2)},${Math.floor((timeMs || 0) / 1_800_000)}`;
 }
 
+function nearDuplicateFire(a, b) {
+  return Math.abs(a.lat - b.lat) < 0.4 && Math.abs(a.lon - b.lon) < 0.4;
+}
+
+/** Prefer CIFFC/NRCan agency pins; keep non-overlapping EONET/IRWIN fires. */
+function mergeWildfires(canadaFires, eonetFires) {
+  const merged = canadaFires.map((fire) => ({ ...fire }));
+  for (const fire of eonetFires) {
+    if (merged.some((existing) => nearDuplicateFire(existing, fire))) continue;
+    merged.push(fire);
+  }
+  return merged;
+}
+
+function formatHectares(ha) {
+  if (!Number.isFinite(ha)) return null;
+  if (ha >= 1000) return `${Math.round(ha).toLocaleString()} ha`;
+  if (ha >= 10) return `${ha.toFixed(ha >= 100 ? 0 : 1)} ha`;
+  if (ha >= 1) return `${ha.toFixed(1)} ha`;
+  return `${ha.toFixed(2)} ha`;
+}
+
+function parseCanadaFireFeature(feature, hours) {
+  const a = feature?.attributes || feature?.properties || {};
+  const geom = feature?.geometry;
+
+  const lat = Number(a.Latitude ?? a.latitude ?? geom?.y);
+  const lon = Number(a.Longitude ?? a.longitude ?? geom?.x);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+
+  const agency = String(a.Agency || a.agency || "").toUpperCase();
+  const fireName = a.Fire_Name || a.fire_name || a.FireName || "";
+  const hectares = Number(a.Hectares__Ha_ ?? a.hectares ?? a.Hectares);
+  const stage = String(a.Stage_of_Control || a.stage_of_control || "").toUpperCase();
+  const response = String(a.response_type || a.Response_Type || "").toUpperCase();
+  const startMs = Number(a.Start_Date ?? a.start_date);
+  if (!Number.isFinite(startMs)) return null;
+
+  const ageDays = (Date.now() - startMs) / 86_400_000;
+  if (ageDays > CANADA_FIRE_MAX_AGE_DAYS) return null;
+  if (stage === "EX") return null;
+
+  const ha = Number.isFinite(hectares) ? hectares : 0;
+  const recent = inWindow(startMs, hours);
+  if (!recent && ha < CANADA_FIRE_MIN_HECTARES) return null;
+
+  const place = canadaAgencyLabel(agency);
+  const shortName = humanizeCanadaFireName(fireName, agency);
+  const stageLabel = CANADA_STAGE_LABELS[stage] || stage || "Active";
+  const responseLabel = CANADA_RESPONSE_LABELS[response];
+  const haLabel = formatHectares(ha);
+
+  const title = shortName
+    ? `${place} wildfire ${shortName}`
+    : `${place} wildfire`;
+
+  const descParts = [
+    `${stageLabel} wildfire in ${place}.`,
+    haLabel ? `Reported size ${haLabel}.` : null,
+    responseLabel ? `${responseLabel}.` : null,
+    "Source: Canadian provincial/territorial agencies via CIFFC / Natural Resources Canada.",
+  ].filter(Boolean);
+
+  const event = {
+    id: `canada-fire-${a.ObjectId ?? a.objectid ?? fireName ?? `${lat},${lon}`}`,
+    type: "fire",
+    title,
+    lat,
+    lon,
+    time: startMs,
+    description: descParts.join(" "),
+    source: "CIFFC / NRCan",
+    canadaAgency: agency || null,
+    fireName: fireName || null,
+    hectares: ha,
+    stage,
+    ongoing: true,
+  };
+  event.url = pickEventDetailUrl(event);
+  return event;
+}
+
+async function fetchCanadaFiresJson() {
+  const urls =
+    typeof window !== "undefined"
+      ? ["/api/canada-fires", CANADA_FIRES_ARCGIS_URL]
+      : [CANADA_FIRES_ARCGIS_URL];
+
+  let lastError;
+  for (const url of urls) {
+    try {
+      const res = await fetchWithTimeout(url, {
+        headers: { Accept: "application/json" },
+      });
+      if (!res.ok) throw new Error(`Canada fires HTTP ${res.status}`);
+      return await res.json();
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("Canada fires unavailable");
+}
+
+async function fetchCanadaWildfires(hours) {
+  const data = await fetchCanadaFiresJson();
+  const features = data.features || [];
+  const events = [];
+
+  for (const feature of features) {
+    const parsed = parseCanadaFireFeature(feature, hours);
+    if (parsed) events.push(parsed);
+  }
+
+  return events;
+}
+
 export async function fetchDisasters(hours = 24) {
-  const [eqResult, nhcResult, eonetResult, tornadoResult, tsunamiResult] = await Promise.allSettled([
-    fetchEarthquakes(hours),
-    fetchHurricanes(),
-    fetchEonet(hours),
-    fetchTornadoes(hours),
-    fetchTsunamis(hours),
-  ]);
+  const [eqResult, nhcResult, eonetResult, tornadoResult, tsunamiResult, canadaFireResult] =
+    await Promise.allSettled([
+      fetchEarthquakes(hours),
+      fetchHurricanes(),
+      fetchEonet(hours),
+      fetchTornadoes(hours),
+      fetchTsunamis(hours),
+      fetchCanadaWildfires(hours),
+    ]);
 
   const events = [];
   const errors = [];
@@ -689,13 +963,20 @@ export async function fetchDisasters(hours = 24) {
   else errors.push("earthquakes");
 
   let eonetStorms = [];
+  let eonetFires = [];
   if (eonetResult.status === "fulfilled") {
     const eonet = eonetResult.value;
-    events.push(...(eonet?.general || []));
+    const general = eonet?.general || [];
+    eonetFires = general.filter((e) => e.type === "fire");
+    events.push(...general.filter((e) => e.type !== "fire"));
     eonetStorms = eonet?.severeStorms || [];
   } else {
     errors.push("eonet");
   }
+
+  const canadaFires = canadaFireResult.status === "fulfilled" ? canadaFireResult.value : [];
+  if (canadaFireResult.status === "rejected") errors.push("canada-fires");
+  events.push(...mergeWildfires(canadaFires, eonetFires));
 
   const nhcStorms = nhcResult.status === "fulfilled" ? nhcResult.value : [];
   if (nhcResult.status === "rejected") errors.push("nhc");
@@ -946,9 +1227,9 @@ async function fetchHurricanes() {
 }
 
 async function fetchEonet(hours) {
-  // EONET's days window is when an event *opened*, not last update — use max days so
-  // ongoing Western Pacific storms (e.g. Bavi) are not dropped on the 24h/48h filters.
-  const data = await fetchEonetJson(3);
+  // EONET's days window is when an event *opened*, not last update — widen so multi-day
+  // open wildfires and ongoing Western Pacific storms are not dropped on 24h/48h filters.
+  const data = await fetchEonetJson(7);
 
   const general = [];
   const severeStorms = [];
