@@ -1,6 +1,6 @@
 /**
- * Disaster data — fetches and normalizes events from USGS, NOAA, NASA EONET,
- * and CIFFC/NRCan active Canadian wildfires.
+ * Disaster data — fetches and normalizes global events from USGS, NOAA, NASA
+ * EONET/FIRMS, GDACS, and CIFFC/NRCan Canadian wildfires.
  */
 
 /** USGS minimum magnitude — was 4.5; 3.0 surfaces more felt quakes without flooding the globe. */
@@ -86,6 +86,14 @@ const CURATED_VOLCANOES = [
 ];
 
 const FETCH_TIMEOUT_MS = 20_000;
+const FIRMS_FETCH_TIMEOUT_MS = 45_000;
+/** Cap clustered satellite fire pins so savanna burn seasons don't bury the globe. */
+const FIRMS_MAX_EVENTS = 280;
+const FIRMS_MIN_CONFIDENCE = 80;
+const FIRMS_MIN_FRP = 35;
+const FIRMS_CLUSTER_DEG = 0.45;
+const FIRMS_MIN_CLUSTER_COUNT = 2;
+const FIRMS_MIN_CLUSTER_FRP = 90;
 
 /** National Canadian fire tracker (CIFFC) — free, all provinces, no login. */
 const CANADA_FIRES_DETAIL_URL = "https://ciffc.net/";
@@ -323,6 +331,18 @@ function wildfireFirmsMapUrl(event) {
 function pickWildfireDetailUrl(event, ...candidates) {
   if (event.canadaAgency) return CANADA_FIRES_DETAIL_URL;
 
+  if (event.source?.includes("GDACS") || event.id?.startsWith("gdacs-")) {
+    for (const candidate of candidates) {
+      const normalized = normalizeDetailUrl(candidate);
+      if (normalized && !isPaywalledUrl(normalized)) return normalized;
+    }
+    return "https://www.gdacs.org/";
+  }
+
+  if (event.source?.includes("FIRMS") || event.id?.startsWith("firms-")) {
+    return wildfireFirmsMapUrl(event) || DETAIL_URL_FALLBACKS.fire;
+  }
+
   for (const candidate of candidates) {
     const normalized = normalizeDetailUrl(candidate);
     if (normalized && isOfficialUrlForEvent(normalized, event)) return normalized;
@@ -454,10 +474,11 @@ function pickEventDetailUrl(event, ...candidates) {
 }
 
 async function fetchWithTimeout(url, options = {}) {
+  const { timeoutMs = FETCH_TIMEOUT_MS, ...fetchOptions } = options;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    return await fetch(url, { ...fetchOptions, signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
@@ -474,6 +495,27 @@ function isoStart(hours) {
 function inWindow(timeMs, hours) {
   if (!timeMs) return true;
   return timeMs >= windowStartMs(hours);
+}
+
+/** Multi-day disasters (floods, named fires) count if active anytime in the window. */
+function rangeOverlapsWindow(fromMs, toMs, hours) {
+  const windowEnd = Date.now();
+  const windowStart = windowStartMs(hours);
+  const start = Number.isFinite(fromMs) ? fromMs : toMs;
+  const end = Number.isFinite(toMs) ? toMs : fromMs;
+  if (!Number.isFinite(start) && !Number.isFinite(end)) return false;
+  const s = Number.isFinite(start) ? start : end;
+  const e = Number.isFinite(end) ? end : start;
+  return s <= windowEnd && e >= windowStart;
+}
+
+function parseFlexibleTime(value) {
+  if (value == null || value === "") return NaN;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value < 1e12 ? value * 1000 : value;
+  }
+  const ms = new Date(value).getTime();
+  return Number.isNaN(ms) ? NaN : ms;
 }
 
 function stormTrackPoints(geometries, hours) {
@@ -777,14 +819,32 @@ function nearDuplicateFire(a, b) {
   return Math.abs(a.lat - b.lat) < 0.4 && Math.abs(a.lon - b.lon) < 0.4;
 }
 
-/** Prefer CIFFC/NRCan agency pins; keep non-overlapping EONET/IRWIN fires. */
-function mergeWildfires(canadaFires, eonetFires) {
-  const merged = canadaFires.map((fire) => ({ ...fire }));
-  for (const fire of eonetFires) {
-    if (merged.some((existing) => nearDuplicateFire(existing, fire))) continue;
-    merged.push(fire);
+/**
+ * Merge wildfire lists. Earlier sources win on near-duplicates
+ * (Canada agency → GDACS named → EONET/US → FIRMS satellite).
+ */
+function mergeWildfires(...lists) {
+  const merged = [];
+  for (const list of lists) {
+    for (const fire of list || []) {
+      if (merged.some((existing) => nearDuplicateFire(existing, fire))) continue;
+      merged.push(fire);
+    }
   }
   return merged;
+}
+
+function mergeByProximity(primary, secondary, nearFn) {
+  const merged = primary.map((item) => ({ ...item }));
+  for (const item of secondary || []) {
+    if (merged.some((existing) => nearFn(existing, item))) continue;
+    merged.push(item);
+  }
+  return merged;
+}
+
+function nearDuplicatePoint(a, b, deg = 1.2) {
+  return Math.abs(a.lat - b.lat) < deg && Math.abs(a.lon - b.lon) < deg;
 }
 
 function formatHectares(ha) {
@@ -885,16 +945,266 @@ async function fetchCanadaWildfires(hours) {
   return events;
 }
 
+const GDACS_TYPE_MAP = {
+  WF: "fire",
+  FL: "flood",
+  VO: "volcano",
+  TC: "hurricane",
+};
+
+function gdacsReportUrl(props) {
+  const report = props?.url?.report;
+  if (typeof report === "string" && report.startsWith("http")) return report;
+  const eventtype = props?.eventtype;
+  const eventid = props?.eventid;
+  if (eventtype && eventid != null) {
+    return `https://www.gdacs.org/report.aspx?eventid=${eventid}&eventtype=${eventtype}`;
+  }
+  return "https://www.gdacs.org/";
+}
+
+function parseGdacsFeature(feature, hours) {
+  const props = feature?.properties || {};
+  const type = GDACS_TYPE_MAP[props.eventtype];
+  if (!type) return null;
+
+  const coords = feature?.geometry?.coordinates;
+  if (!Array.isArray(coords) || coords.length < 2) return null;
+  const lon = Number(coords[0]);
+  const lat = Number(coords[1]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+
+  // Prefer map centroids over cone/track clutter points.
+  const klass = String(props.Class || props.polygonlabel || "");
+  if (klass && !/centroid|affected|global/i.test(klass) && /poly_|line_|point_polygon|cones/i.test(klass)) {
+    return null;
+  }
+
+  const fromMs = parseFlexibleTime(props.fromdate);
+  const toMs = parseFlexibleTime(props.todate);
+  const modMs = parseFlexibleTime(props.datemodified);
+  if (!rangeOverlapsWindow(fromMs, Number.isFinite(toMs) ? toMs : modMs, hours)) return null;
+
+  const country = props.country || props.iso3 || "";
+  const name = (props.name || props.description || props.eventname || "").trim();
+  const alert = props.alertlevel || props.episodealertlevel || "";
+  const severity = props.severitydata?.severitytext || props.htmldescription || "";
+
+  let title = name || `${type} event`;
+  if (type === "fire" && country && !/forest fire|wildfire/i.test(title)) {
+    title = `Wildfire in ${country}`;
+  }
+
+  const time = Number.isFinite(toMs)
+    ? toMs
+    : Number.isFinite(modMs)
+      ? modMs
+      : Number.isFinite(fromMs)
+        ? fromMs
+        : Date.now();
+
+  const descParts = [
+    name || null,
+    country ? `Location: ${country}.` : null,
+    alert ? `GDACS alert: ${alert}.` : null,
+    severity ? String(severity).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : null,
+  ].filter(Boolean);
+
+  const event = {
+    id: `gdacs-${props.eventtype}-${props.eventid}-${props.episodeid ?? 0}`,
+    type,
+    title,
+    lat,
+    lon,
+    time,
+    description: descParts.join(" ").slice(0, 500),
+    source: "GDACS",
+    alertLevel: alert || null,
+    country: country || null,
+  };
+  event.url = pickEventDetailUrl(event, gdacsReportUrl(props));
+  return event;
+}
+
+async function fetchGdacsJson(hours) {
+  const urls =
+    typeof window !== "undefined"
+      ? [`/api/gdacs?hours=${hours}`, null]
+      : [
+          "https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH" +
+            `?eventlist=${encodeURIComponent("WF;FL;VO;TC")}` +
+            "&alertlevel=Green;Orange;Red" +
+            `&fromdate=${new Date(Date.now() - (hours + 21 * 24) * 3600_000).toISOString().slice(0, 10)}` +
+            `&todate=${new Date().toISOString().slice(0, 10)}`,
+        ];
+
+  // Browser: proxy only (CORS). Node tests: direct SEARCH URL.
+  const candidates = urls.filter(Boolean);
+  let lastError;
+  for (const url of candidates) {
+    try {
+      const res = await fetchWithTimeout(url, {
+        headers: { Accept: "application/json", "User-Agent": "calamityville" },
+      });
+      if (!res.ok) throw new Error(`GDACS HTTP ${res.status}`);
+      return await res.json();
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("GDACS unavailable");
+}
+
+async function fetchGdacs(hours) {
+  const data = await fetchGdacsJson(hours);
+  const byKey = new Map();
+
+  for (const feature of data.features || []) {
+    const parsed = parseGdacsFeature(feature, hours);
+    if (!parsed) continue;
+    // Dedupe track/cone duplicates: keep first (centroid preferred by filter order).
+    const key = `${parsed.type}-${feature.properties?.eventid ?? parsed.id}`;
+    if (byKey.has(key)) continue;
+    byKey.set(key, parsed);
+  }
+
+  return {
+    fires: [...byKey.values()].filter((e) => e.type === "fire"),
+    floods: [...byKey.values()].filter((e) => e.type === "flood"),
+    storms: [...byKey.values()].filter((e) => e.type === "hurricane"),
+    volcanoes: [...byKey.values()].filter((e) => e.type === "volcano"),
+  };
+}
+
+function parseFirmsCsv(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(",").map((h) => h.trim());
+  const idx = Object.fromEntries(headers.map((h, i) => [h, i]));
+  const points = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(",");
+    if (cols.length < headers.length) continue;
+    const lat = Number(cols[idx.latitude]);
+    const lon = Number(cols[idx.longitude]);
+    const confidence = Number(cols[idx.confidence]);
+    const frp = Number(cols[idx.frp]);
+    const acqDate = cols[idx.acq_date];
+    const acqTime = String(cols[idx.acq_time] || "0").padStart(4, "0");
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    if (!Number.isFinite(confidence) || confidence < FIRMS_MIN_CONFIDENCE) continue;
+    if (!Number.isFinite(frp) || frp < FIRMS_MIN_FRP) continue;
+
+    const time = new Date(`${acqDate}T${acqTime.slice(0, 2)}:${acqTime.slice(2, 4)}:00Z`).getTime();
+    if (Number.isNaN(time)) continue;
+
+    points.push({ lat, lon, time, frp, confidence });
+  }
+  return points;
+}
+
+function clusterFirmsPoints(points, hours) {
+  const cell = FIRMS_CLUSTER_DEG;
+  const buckets = new Map();
+
+  for (const p of points) {
+    if (!inWindow(p.time, hours)) continue;
+    const key = `${Math.floor(p.lat / cell)},${Math.floor(p.lon / cell)}`;
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = [];
+      buckets.set(key, bucket);
+    }
+    bucket.push(p);
+  }
+
+  const clusters = [];
+  for (const [key, group] of buckets) {
+    const totalFrp = group.reduce((s, p) => s + p.frp, 0);
+    if (group.length < FIRMS_MIN_CLUSTER_COUNT && totalFrp < FIRMS_MIN_CLUSTER_FRP) continue;
+
+    const lat = group.reduce((s, p) => s + p.lat, 0) / group.length;
+    const lon = group.reduce((s, p) => s + p.lon, 0) / group.length;
+    const time = Math.max(...group.map((p) => p.time));
+    const maxFrp = Math.max(...group.map((p) => p.frp));
+
+    const event = {
+      id: `firms-${key}-${time}`,
+      type: "fire",
+      title: "Satellite-detected fire",
+      lat,
+      lon,
+      time,
+      description:
+        `NASA FIRMS satellite thermal anomaly cluster (${group.length} detection${group.length === 1 ? "" : "s"}). ` +
+        `Peak FRP ${maxFrp.toFixed(0)} MW. May include agricultural or prescribed burns.`,
+      source: "NASA FIRMS",
+      frp: totalFrp,
+      detectionCount: group.length,
+    };
+    event.url = pickEventDetailUrl(event);
+    clusters.push(event);
+  }
+
+  clusters.sort((a, b) => (b.frp || 0) - (a.frp || 0));
+  return clusters.slice(0, FIRMS_MAX_EVENTS);
+}
+
+async function fetchFirmsCsv(hours) {
+  const urls =
+    typeof window !== "undefined"
+      ? [`/api/firms?hours=${hours}`]
+      : [
+          hours <= 24
+            ? "https://firms.modaps.eosdis.nasa.gov/data/active_fire/modis-c6.1/csv/MODIS_C6_1_Global_24h.csv"
+            : hours <= 48
+              ? "https://firms.modaps.eosdis.nasa.gov/data/active_fire/modis-c6.1/csv/MODIS_C6_1_Global_48h.csv"
+              : "https://firms.modaps.eosdis.nasa.gov/data/active_fire/modis-c6.1/csv/MODIS_C6_1_Global_7d.csv",
+        ];
+
+  let lastError;
+  for (const url of urls) {
+    try {
+      const res = await fetchWithTimeout(url, {
+        headers: { Accept: "text/csv", "User-Agent": "calamityville" },
+        timeoutMs: FIRMS_FETCH_TIMEOUT_MS,
+      });
+      if (!res.ok) throw new Error(`FIRMS HTTP ${res.status}`);
+      return await res.text();
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("FIRMS unavailable");
+}
+
+async function fetchFirmsWildfires(hours) {
+  const csv = await fetchFirmsCsv(hours);
+  const points = parseFirmsCsv(csv);
+  return clusterFirmsPoints(points, hours);
+}
+
 export async function fetchDisasters(hours = 24) {
-  const [eqResult, nhcResult, eonetResult, tornadoResult, tsunamiResult, canadaFireResult] =
-    await Promise.allSettled([
-      fetchEarthquakes(hours),
-      fetchHurricanes(),
-      fetchEonet(hours),
-      fetchTornadoes(hours),
-      fetchTsunamis(hours),
-      fetchCanadaWildfires(hours),
-    ]);
+  const [
+    eqResult,
+    nhcResult,
+    eonetResult,
+    tornadoResult,
+    tsunamiResult,
+    canadaFireResult,
+    gdacsResult,
+    firmsResult,
+  ] = await Promise.allSettled([
+    fetchEarthquakes(hours),
+    fetchHurricanes(),
+    fetchEonet(hours),
+    fetchTornadoes(hours),
+    fetchTsunamis(hours),
+    fetchCanadaWildfires(hours),
+    fetchGdacs(hours),
+    fetchFirmsWildfires(hours),
+  ]);
 
   const events = [];
   const errors = [];
@@ -904,24 +1214,41 @@ export async function fetchDisasters(hours = 24) {
 
   let eonetStorms = [];
   let eonetFires = [];
+  let eonetFloods = [];
+  let eonetVolcanoes = [];
   if (eonetResult.status === "fulfilled") {
     const eonet = eonetResult.value;
     const general = eonet?.general || [];
     eonetFires = general.filter((e) => e.type === "fire");
-    events.push(...general.filter((e) => e.type !== "fire"));
+    eonetFloods = general.filter((e) => e.type === "flood");
+    eonetVolcanoes = general.filter((e) => e.type === "volcano");
     eonetStorms = eonet?.severeStorms || [];
   } else {
     errors.push("eonet");
   }
 
+  const gdacs =
+    gdacsResult.status === "fulfilled"
+      ? gdacsResult.value
+      : { fires: [], floods: [], storms: [], volcanoes: [] };
+  if (gdacsResult.status === "rejected") errors.push("gdacs");
+
   const canadaFires = canadaFireResult.status === "fulfilled" ? canadaFireResult.value : [];
   if (canadaFireResult.status === "rejected") errors.push("canada-fires");
-  events.push(...mergeWildfires(canadaFires, eonetFires));
+
+  const firmsFires = firmsResult.status === "fulfilled" ? firmsResult.value : [];
+  if (firmsResult.status === "rejected") errors.push("firms");
+
+  // Prefer named/agency fires over anonymous satellite clusters when colocated.
+  events.push(...mergeWildfires(canadaFires, gdacs.fires, eonetFires, firmsFires));
+  events.push(...mergeByProximity(gdacs.floods, eonetFloods, (a, b) => nearDuplicatePoint(a, b, 1.5)));
+  events.push(...mergeByProximity(gdacs.volcanoes, eonetVolcanoes, (a, b) => nearDuplicatePoint(a, b, 0.8)));
 
   const nhcStorms = nhcResult.status === "fulfilled" ? nhcResult.value : [];
   if (nhcResult.status === "rejected") errors.push("nhc");
-  events.push(...mergeHurricanes(nhcStorms, eonetStorms));
-  if (!nhcStorms.length && !eonetStorms.length && nhcResult.status === "rejected") {
+  const storms = mergeHurricanes(nhcStorms, eonetStorms);
+  events.push(...mergeByProximity(storms, gdacs.storms, (a, b) => nearDuplicatePoint(a, b, 3)));
+  if (!nhcStorms.length && !eonetStorms.length && !gdacs.storms.length && nhcResult.status === "rejected") {
     errors.push("hurricanes");
   }
 
