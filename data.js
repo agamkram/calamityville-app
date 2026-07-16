@@ -87,65 +87,35 @@ const CURATED_VOLCANOES = [
 
 const FETCH_TIMEOUT_MS = 20_000;
 
+/** National Canadian fire tracker (CIFFC) — free, all provinces, no login. */
+const CANADA_FIRES_DETAIL_URL = "https://ciffc.net/";
+
 const DETAIL_URL_FALLBACKS = {
   earthquake: "https://earthquake.usgs.gov/",
   volcano: "https://www.usgs.gov/programs/VHP",
   hurricane: "https://www.nhc.noaa.gov/",
-  fire: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
+  fire: CANADA_FIRES_DETAIL_URL,
   flood: "https://www.weather.gov/safety/flood",
   tornado: "https://www.spc.noaa.gov/climo/reports/",
   tsunami: "https://www.tsunami.gov/",
 };
 
-/** Free public agency / national pages (no login, no paywall). */
-const CANADA_AGENCY_META = {
-  BC: {
-    label: "British Columbia",
-    url: "https://wildfiresituation.nrs.gov.bc.ca/map",
-  },
-  AB: { label: "Alberta", url: "https://www.alberta.ca/wildfire-status" },
-  SK: {
-    label: "Saskatchewan",
-    url: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
-  },
-  MB: {
-    label: "Manitoba",
-    url: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
-  },
-  ON: { label: "Ontario", url: "https://www.ontario.ca/page/forest-fires" },
-  QC: { label: "Quebec", url: "https://sopfeu.qc.ca/" },
-  NB: {
-    label: "New Brunswick",
-    url: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
-  },
-  NS: {
-    label: "Nova Scotia",
-    url: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
-  },
-  NL: {
-    label: "Newfoundland and Labrador",
-    url: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
-  },
-  PE: {
-    label: "Prince Edward Island",
-    url: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
-  },
-  YT: {
-    label: "Yukon",
-    url: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
-  },
-  NT: {
-    label: "Northwest Territories",
-    url: "https://www.gov.nt.ca/ecc/en/services/wildfire-update",
-  },
-  NU: {
-    label: "Nunavut",
-    url: "https://cwfis.cfs.nrcan.gc.ca/interactive-map",
-  },
-  PC: {
-    label: "Parks Canada",
-    url: "https://parks.canada.ca/nature/science/conservation/feu-fire",
-  },
+/** Agency codes → display labels (detail links all go to CIFFC). */
+const CANADA_AGENCY_LABELS = {
+  BC: "British Columbia",
+  AB: "Alberta",
+  SK: "Saskatchewan",
+  MB: "Manitoba",
+  ON: "Ontario",
+  QC: "Quebec",
+  NB: "New Brunswick",
+  NS: "Nova Scotia",
+  NL: "Newfoundland and Labrador",
+  PE: "Prince Edward Island",
+  YT: "Yukon",
+  NT: "Northwest Territories",
+  NU: "Nunavut",
+  PC: "Parks Canada",
 };
 
 const CANADA_STAGE_LABELS = {
@@ -314,7 +284,7 @@ function confirmedTornadoNewsUrl(event) {
 }
 
 function canadaAgencyLabel(code) {
-  return CANADA_AGENCY_META[code]?.label || code || "Canada";
+  return CANADA_AGENCY_LABELS[code] || code || "Canada";
 }
 
 function humanizeCanadaFireName(rawName, agency) {
@@ -349,29 +319,9 @@ function wildfireFirmsMapUrl(event) {
   return `https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;@${event.lon.toFixed(4)},${event.lat.toFixed(4)},10z`;
 }
 
-function canadaAgencyStatusUrl(event) {
-  const code = event.canadaAgency;
-  if (!code) return null;
-  return CANADA_AGENCY_META[code]?.url || "https://cwfis.cfs.nrcan.gc.ca/interactive-map";
-}
-
-function canadaCwfisMapUrl() {
-  return "https://cwfis.cfs.nrcan.gc.ca/interactive-map";
-}
-
 /** Prefer free government pages; avoid paywalled news; FIRMS map last for non-Canada. */
 function pickWildfireDetailUrl(event, ...candidates) {
-  if (event.canadaAgency) {
-    const agencyUrl = canadaAgencyStatusUrl(event);
-    if (agencyUrl) return agencyUrl;
-
-    if ((event.hectares || 0) >= 1000) {
-      const news = wildfireCoverageUrl(event);
-      if (news) return news;
-    }
-
-    return canadaCwfisMapUrl();
-  }
+  if (event.canadaAgency) return CANADA_FIRES_DETAIL_URL;
 
   for (const candidate of candidates) {
     const normalized = normalizeDetailUrl(candidate);
