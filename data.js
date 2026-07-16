@@ -6,11 +6,6 @@
 /** USGS minimum magnitude — was 4.5; 3.0 surfaces more felt quakes without flooding the globe. */
 const EARTHQUAKE_MIN_MAGNITUDE = 2.5;
 
-/** Drop stale agency rows still marked active (e.g. prior-season ghosts). */
-const CANADA_FIRE_MAX_AGE_DAYS = 90;
-/** Keep small monitoring pins out of the globe unless they started inside the UI window. */
-const CANADA_FIRE_MIN_HECTARES = 10;
-
 export const DISASTER_TYPES = {
   earthquake: { label: "Earthquake", color: "#ff9f0a" },
   volcano: { label: "Volcano", color: "#bf5af2" },
@@ -589,8 +584,7 @@ function latestGeometry(geometries, hours, { ongoing = false } = {}) {
 
 function parseEonetEvent(ev, type, hours) {
   try {
-    // Open wildfires keep burning after the first geometry date — treat like active storms.
-    const ongoing = (type === "hurricane" || type === "fire") && !ev.closed;
+    const ongoing = type === "hurricane" && !ev.closed;
     const geom = latestGeometry(ev.geometry, hours, { ongoing });
     if (!geom) return null;
 
@@ -866,14 +860,11 @@ function parseCanadaFireFeature(feature, hours) {
   const response = String(a.response_type || a.Response_Type || "").toUpperCase();
   const startMs = Number(a.Start_Date ?? a.start_date);
   if (!Number.isFinite(startMs)) return null;
-
-  const ageDays = (Date.now() - startMs) / 86_400_000;
-  if (ageDays > CANADA_FIRE_MAX_AGE_DAYS) return null;
+  // Same 72/48/24h window as other calamities — start time only (no "still burning" override).
+  if (!inWindow(startMs, hours)) return null;
   if (stage === "EX") return null;
 
   const ha = Number.isFinite(hectares) ? hectares : 0;
-  const recent = inWindow(startMs, hours);
-  if (!recent && ha < CANADA_FIRE_MIN_HECTARES) return null;
 
   const place = canadaAgencyLabel(agency);
   const shortName = humanizeCanadaFireName(fireName, agency);
@@ -905,7 +896,6 @@ function parseCanadaFireFeature(feature, hours) {
     fireName: fireName || null,
     hectares: ha,
     stage,
-    ongoing: true,
   };
   event.url = pickEventDetailUrl(event);
   return event;
