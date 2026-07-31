@@ -14,8 +14,19 @@
     name="description"
     content="Calamityville — live disasters on a 3D Earth: earthquakes, tsunamis, tornadoes, hurricanes, floods, wildfires, and volcanoes."
   />
+  <!-- social-share meta (tier-a) -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Mark Maga" />
+  <meta property="og:title" content="Calamityville" />
+  <meta property="og:description" content="Live disasters on a 3D Earth: earthquakes, storms, fires, and more." />
+  <meta property="og:url" content="https://calamityville.markmaga.com/" />
+  <meta property="og:image" content="https://calamityville.markmaga.com/icon-512.png" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="Calamityville" />
+  <meta name="twitter:description" content="Live disasters on a 3D Earth: earthquakes, storms, fires, and more." />
+  <meta name="twitter:image" content="https://calamityville.markmaga.com/icon-512.png" />
   <title>Calamityville</title>
-  <link rel="icon" type="image/png" href="apple-touch-icon.png" />
+  <link rel="icon" type="image/png" href="icon-192.png" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="preconnect" href="https://earthquake.usgs.gov" crossorigin />
@@ -26,10 +37,7 @@
   <link rel="preconnect" href="https://firms.modaps.eosdis.nasa.gov" crossorigin />
   <link rel="preconnect" href="https://unpkg.com" crossorigin />
   <link rel="modulepreload" href="https://unpkg.com/three@0.160.0/build/three.module.js" />
-  <link rel="preload" href="stars-8k.jpg" as="image" type="image/jpeg" />
-  <link rel="preload" href="moon-2k.jpg" as="image" type="image/jpeg" />
-  <link rel="preload" href="moon-normal-2k.jpg" as="image" type="image/jpeg" />
-  <link rel="preload" href="sun-2k.jpg" as="image" type="image/jpeg" />
+  <!-- Heavy textures load on demand in app.js (no multi-MB preloads). -->
   <style>
     :root {
       color-scheme: dark;
