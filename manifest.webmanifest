@@ -1,6 +1,6 @@
 {
-  "name": "Calamityville",
-  "short_name": "Calamityville",
+  "name": "CalamityVille",
+  "short_name": "CalamityVille",
   "description": "Live disasters on a 3D Earth",
   "start_url": "/",
   "display": "standalone",

@@ -9,26 +9,29 @@
   <meta name="theme-color" content="#020308" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Calamityville" />
+  <meta name="apple-mobile-web-app-title" content="CalamityVille" />
   <meta
     name="description"
-    content="Calamityville — live disasters on a 3D Earth: earthquakes, tsunamis, tornadoes, hurricanes, floods, wildfires, and volcanoes."
+    content="CalamityVille — live disasters on a 3D Earth: earthquakes, tsunamis, tornadoes, hurricanes, floods, wildfires, and volcanoes."
   />
   <!-- social-share meta (tier-a) -->
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Mark Maga" />
-  <meta property="og:title" content="Calamityville" />
+  <meta property="og:title" content="CalamityVille" />
   <meta property="og:description" content="Live disasters on a 3D Earth: earthquakes, storms, fires, and more." />
   <meta property="og:url" content="https://calamityville.markmaga.com/" />
   <meta property="og:image" content="https://calamityville.markmaga.com/icon-512.png" />
   <meta name="twitter:card" content="summary" />
-  <meta name="twitter:title" content="Calamityville" />
+  <meta name="twitter:title" content="CalamityVille" />
   <meta name="twitter:description" content="Live disasters on a 3D Earth: earthquakes, storms, fires, and more." />
   <meta name="twitter:image" content="https://calamityville.markmaga.com/icon-512.png" />
-  <title>Calamityville</title>
+  <title>CalamityVille</title>
   <link rel="icon" type="image/png" href="icon-192.png" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Michroma&display=swap" rel="stylesheet" />
   <link rel="preconnect" href="https://earthquake.usgs.gov" crossorigin />
   <link rel="preconnect" href="https://www.nhc.noaa.gov" crossorigin />
   <link rel="preconnect" href="https://eonet.gsfc.nasa.gov" crossorigin />
@@ -101,114 +104,155 @@
       z-index: 2;
     }
 
-    .chrome > * { pointer-events: auto; }
+    /* Title is display-only; only the bottom card should capture taps */
+    .chrome > .bottom-card { pointer-events: auto; }
 
-    .time-toggle {
+    /* Shared Mark Maga title (Michroma) — matches SuperMoon / SolarDashboard / OrbitalView */
+    .app-chrome {
       position: absolute;
-      top: max(0.75rem, env(safe-area-inset-top));
-      left: 50%;
-      transform: translateX(-50%);
+      z-index: 3;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: calc(0.375in + env(safe-area-inset-top, 0px));
+      padding:
+        env(safe-area-inset-top, 0px)
+        max(1rem, env(safe-area-inset-right, 0px))
+        0
+        max(1rem, env(safe-area-inset-left, 0px));
       display: flex;
-      gap: 0.25rem;
-      padding: 0.2rem;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      text-align: center;
     }
 
-    .time-btn {
-      border: none;
-      background: transparent;
-      color: var(--muted);
-      font: inherit;
-      font-size: 0.72rem;
-      padding: 0.35rem 0.75rem;
-      border-radius: 999px;
-      cursor: pointer;
-      transition: background 0.15s, color 0.15s;
-    }
-
-    .time-btn.active {
-      background: rgba(74, 158, 255, 0.22);
+    .app-title {
+      margin: 0;
+      font-family: "Michroma", system-ui, sans-serif;
+      font-weight: 400;
+      /* Mac / fine pointer: original size */
+      font-size: clamp(1.05rem, 3.2vmin, 1.35rem);
+      letter-spacing: 0.1em;
+      line-height: 1.15;
       color: var(--text);
+      text-align: center;
+      text-shadow: 0 1px 12px rgba(0, 0, 0, 0.55);
     }
 
-    .center-toggle {
-      position: absolute;
-      top: max(0.75rem, env(safe-area-inset-top));
-      right: max(0.75rem, env(safe-area-inset-right));
-      display: flex;
-      gap: 0.25rem;
-      padding: 0.2rem;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-    }
-
-    .center-btn {
-      border: none;
-      background: transparent;
-      color: var(--muted);
-      font: inherit;
-      font-size: 0.72rem;
-      padding: 0.35rem 0.75rem;
-      border-radius: 999px;
-      cursor: pointer;
-      transition: background 0.15s, color 0.15s;
-    }
-
-    .center-btn.active {
-      background: rgba(74, 158, 255, 0.22);
-      color: var(--text);
-    }
-
-    @media (max-width: 767px) {
-      .time-toggle {
-        left: max(0.75rem, env(safe-area-inset-left));
-        transform: none;
-      }
-
-      .time-btn,
-      .center-btn {
-        font-size: 0.68rem;
-        padding: 0.32rem 0.6rem;
+    /* Phone + iPad: +1px on the clamp (not Mac) */
+    @media (pointer: coarse) {
+      .app-title {
+        font-size: clamp(calc(1.05rem + 1px), calc(3.2vmin + 1px), calc(1.35rem + 1px));
       }
     }
 
-    .legend {
+    /* Bottom card: time + center toggles + legend + count */
+    .bottom-card {
       position: absolute;
-      bottom: max(0.75rem, env(safe-area-inset-bottom));
-      left: max(0.75rem, env(safe-area-inset-left));
+      bottom: max(0.5rem, env(safe-area-inset-bottom));
+      left: max(0.5rem, env(safe-area-inset-left));
+      right: max(0.5rem, env(safe-area-inset-right));
+      max-width: 28rem;
       display: flex;
-      flex-wrap: wrap;
-      gap: 0.45rem 0.7rem;
-      padding: 0.45rem 0.65rem;
+      flex-direction: column;
+      gap: 0.28rem;
+      padding: 0.35rem 0.45rem 0.32rem;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 0.55rem;
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      font-size: 0.65rem;
+    }
+
+    .controls-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.3rem 0.4rem;
+    }
+
+    .time-toggle,
+    .center-toggle {
+      display: flex;
+      gap: 0.12rem;
+      padding: 0.12rem;
+      background: rgba(0, 0, 0, 0.28);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 999px;
+    }
+
+    /* Push Earth/Moon + Orbit to the right of the top row */
+    .center-toggle {
+      margin-left: auto;
+    }
+
+    .time-btn,
+    .center-btn,
+    .orbit-btn,
+    .vision-btn {
+      border: none;
+      background: transparent;
       color: var(--muted);
+      font: inherit;
+      font-size: 0.68rem;
+      padding: 0.22rem 0.55rem;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      line-height: 1.15;
+    }
+
+    .orbit-btn,
+    .vision-btn {
+      background: rgba(0, 0, 0, 0.28);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      flex-shrink: 0;
+    }
+
+    .time-btn.active,
+    .center-btn.active,
+    .orbit-btn.active,
+    .vision-btn[aria-pressed="true"] {
+      background: rgba(74, 158, 255, 0.22);
+      color: var(--text);
+    }
+
+    #event-count {
+      margin-left: auto;
+      font-size: 0.62rem;
+      color: var(--muted);
+      line-height: 1.2;
+      padding: 0.1rem 0.15rem;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.2rem 0.45rem;
+      font-size: 0.62rem;
+      color: var(--muted);
+      padding-top: 0.22rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.07);
     }
 
     .legend-item {
       display: inline-flex;
       align-items: center;
-      gap: 0.3rem;
+      gap: 0.25rem;
       border: none;
       background: transparent;
       font: inherit;
       font-size: inherit;
       color: inherit;
       cursor: pointer;
-      padding: 0.15rem 0.2rem;
-      border-radius: 0.35rem;
+      padding: 0.1rem 0.15rem;
+      border-radius: 0.3rem;
       transition: opacity 0.2s, background 0.15s;
+      line-height: 1.2;
     }
 
     .legend-item:hover {
@@ -224,8 +268,8 @@
     }
 
     .legend-dot {
-      width: 0.5rem;
-      height: 0.5rem;
+      width: 0.45rem;
+      height: 0.45rem;
       border-radius: 50%;
       flex-shrink: 0;
     }
@@ -241,21 +285,126 @@
     .legend-tornado-key {
       display: inline-flex;
       align-items: center;
-      gap: 0.2rem;
+      gap: 0.15rem;
     }
 
-    #event-count {
-      position: absolute;
-      bottom: max(0.75rem, env(safe-area-inset-bottom));
-      right: max(0.75rem, env(safe-area-inset-right));
-      font-size: 0.68rem;
+    @media (max-width: 380px) {
+      .time-btn,
+      .center-btn,
+      .orbit-btn,
+      .vision-btn {
+        font-size: 0.62rem;
+        padding: 0.2rem 0.42rem;
+      }
+    }
+
+    /* iPad / tablet only — not Mac (fine pointer). Phone keeps base styles. */
+    @media (min-width: 768px) and (pointer: coarse) {
+      .bottom-card {
+        max-width: 36rem;
+        gap: 0.4rem;
+        padding: 0.5rem 0.65rem 0.48rem;
+        border-radius: 0.7rem;
+      }
+
+      .controls-row {
+        gap: 0.4rem 0.55rem;
+      }
+
+      .time-toggle,
+      .center-toggle {
+        gap: 0.16rem;
+        padding: 0.16rem;
+      }
+
+      .time-btn,
+      .center-btn,
+      .orbit-btn,
+      .vision-btn {
+        font-size: 0.82rem;
+        padding: 0.32rem 0.72rem;
+      }
+
+      .legend {
+        gap: 0.28rem 0.6rem;
+        font-size: 0.76rem;
+        padding-top: 0.32rem;
+      }
+
+      .legend-item {
+        padding: 0.14rem 0.22rem;
+        gap: 0.32rem;
+      }
+
+      .legend-dot {
+        width: 0.55rem;
+        height: 0.55rem;
+      }
+
+      #event-count {
+        font-size: 0.74rem;
+      }
+    }
+
+    /*
+     * Night vision (SuperMoon / SuperMars): red UI + blood cast on the globe.
+     * Label shows next action: Red → White when on.
+     */
+    body.is-red-mode {
+      --text: #c81820;
+      --muted: #9a1018;
+      --surface: rgba(18, 2, 2, 0.88);
+      --border: rgba(180, 30, 36, 0.28);
+      --accent: #e02028;
+      background: #030000;
+      color: var(--text);
+    }
+
+    body.is-red-mode .fit-stage,
+    body.is-red-mode .app {
+      background: #030000;
+    }
+
+    body.is-red-mode #globe-canvas {
+      filter: sepia(1) hue-rotate(-48deg) saturate(6.2) brightness(0.38) contrast(1.08);
+    }
+
+    body.is-red-mode .app-title {
+      color: #c0141c;
+      text-shadow: 0 1px 10px rgba(40, 0, 0, 0.7);
+    }
+
+    body.is-red-mode .time-toggle,
+    body.is-red-mode .center-toggle,
+    body.is-red-mode .orbit-btn,
+    body.is-red-mode .vision-btn {
+      background: rgba(40, 4, 4, 0.55);
+      border-color: #3a0c0c;
+    }
+
+    body.is-red-mode .time-btn.active,
+    body.is-red-mode .center-btn.active,
+    body.is-red-mode .orbit-btn.active,
+    body.is-red-mode .vision-btn[aria-pressed="true"] {
+      background: rgba(200, 28, 36, 0.55);
+      color: var(--text);
+    }
+
+    body.is-red-mode .event-sheet {
+      background: rgba(12, 2, 2, 0.96);
+      border-top-color: rgba(180, 30, 36, 0.28);
+    }
+
+    body.is-red-mode #sheet-close {
+      background: rgba(200, 28, 36, 0.18);
+    }
+
+    body.is-red-mode #sheet-desc {
+      color: #c88a8a;
+    }
+
+    body.is-red-mode .loading {
       color: var(--muted);
-      padding: 0.35rem 0.55rem;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 0.45rem;
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
     }
 
     .loading {
@@ -413,45 +562,72 @@
       <canvas id="globe-canvas" aria-label="3D Earth and Moon. Drag to orbit, pinch to zoom, tap pins for event details."></canvas>
 
       <div class="chrome">
-        <div class="time-toggle" role="group" aria-label="Time range">
-          <button type="button" class="time-btn active" data-hours="72">72h</button>
-          <button type="button" class="time-btn" data-hours="48">48h</button>
-          <button type="button" class="time-btn" data-hours="24">24h</button>
+        <div class="app-chrome">
+          <h1 class="app-title">CalamityVille</h1>
         </div>
 
-        <div class="center-toggle" role="group" aria-label="Orbit center">
-          <button type="button" class="center-btn active" data-center="earth">Earth</button>
-          <button type="button" class="center-btn" data-center="moon">Moon</button>
-        </div>
+        <div class="bottom-card">
+          <div class="controls-row">
+            <div class="time-toggle" role="group" aria-label="Time range">
+              <button type="button" class="time-btn active" data-hours="72">72h</button>
+              <button type="button" class="time-btn" data-hours="48">48h</button>
+              <button type="button" class="time-btn" data-hours="24">24h</button>
+            </div>
 
-        <div class="legend" role="group" aria-label="Filter event types">
-          <button type="button" class="legend-item active" data-type="earthquake" aria-pressed="true">
-            <span class="legend-dot" style="background:#ff9f0a"></span>Earthquake
-          </button>
-          <button type="button" class="legend-item active" data-type="volcano" aria-pressed="true">
-            <span class="legend-dot" style="background:#bf5af2"></span>Volcano
-          </button>
-          <button type="button" class="legend-item active" data-type="hurricane" aria-pressed="true">
-            <span class="legend-dot" style="background:#9ca3af"></span>Hurricane
-          </button>
-          <button type="button" class="legend-item active" data-type="fire" aria-pressed="true">
-            <span class="legend-dot" style="background:#ff2d55"></span>Wildfire
-          </button>
-          <button type="button" class="legend-item active" data-type="flood" aria-pressed="true">
-            <span class="legend-dot" style="background:#30d158"></span>Flood
-          </button>
-          <button type="button" class="legend-item active" data-type="tornado" aria-pressed="true">
-            <span class="legend-tornado-key" aria-hidden="true">
-              <span class="legend-dot legend-dot--tornado"></span>
-              <span class="legend-dot legend-dot--tornado-confirmed"></span>
-            </span>Tornado
-          </button>
-          <button type="button" class="legend-item active" data-type="tsunami" aria-pressed="true">
-            <span class="legend-dot" style="background:#5ac8fa"></span>Tsunami
-          </button>
-        </div>
+            <div class="center-toggle" role="group" aria-label="Orbit center">
+              <button type="button" class="center-btn active" data-center="earth">Earth</button>
+              <button type="button" class="center-btn" data-center="moon">Moon</button>
+            </div>
 
-        <p id="event-count">0 events</p>
+            <button
+              type="button"
+              class="orbit-btn"
+              id="orbit-btn"
+              title="Slow continuous orbit (tap again to stop)"
+              aria-pressed="false"
+            >
+              Orbit
+            </button>
+
+            <button
+              type="button"
+              class="vision-btn"
+              id="vision-btn"
+              title="Night vision: red display for dark-adapted eyes"
+              aria-pressed="false"
+            >
+              Red
+            </button>
+          </div>
+
+          <div class="legend" role="group" aria-label="Filter event types">
+            <button type="button" class="legend-item active" data-type="earthquake" aria-pressed="true">
+              <span class="legend-dot" style="background:#ff9f0a"></span>Earthquake
+            </button>
+            <button type="button" class="legend-item active" data-type="volcano" aria-pressed="true">
+              <span class="legend-dot" style="background:#bf5af2"></span>Volcano
+            </button>
+            <button type="button" class="legend-item active" data-type="hurricane" aria-pressed="true">
+              <span class="legend-dot" style="background:#9ca3af"></span>Hurricane
+            </button>
+            <button type="button" class="legend-item active" data-type="fire" aria-pressed="true">
+              <span class="legend-dot" style="background:#ff2d55"></span>Wildfire
+            </button>
+            <button type="button" class="legend-item active" data-type="flood" aria-pressed="true">
+              <span class="legend-dot" style="background:#30d158"></span>Flood
+            </button>
+            <button type="button" class="legend-item active" data-type="tornado" aria-pressed="true">
+              <span class="legend-tornado-key" aria-hidden="true">
+                <span class="legend-dot legend-dot--tornado"></span>
+                <span class="legend-dot legend-dot--tornado-confirmed"></span>
+              </span>Tornado
+            </button>
+            <button type="button" class="legend-item active" data-type="tsunami" aria-pressed="true">
+              <span class="legend-dot" style="background:#5ac8fa"></span>Tsunami
+            </button>
+            <p id="event-count">0 events</p>
+          </div>
+        </div>
       </div>
 
       <p id="loading" class="loading" aria-live="polite">Loading events…</p>
@@ -483,6 +659,26 @@
     import { bootGlobe } from "./app.js";
 
     let globe = null;
+    let redModeOn = false;
+
+    const visionBtn = document.getElementById("vision-btn");
+
+    function setRedMode(on) {
+      redModeOn = !!on;
+      document.body.classList.toggle("is-red-mode", redModeOn);
+      if (visionBtn) {
+        visionBtn.textContent = redModeOn ? "White" : "Red";
+        visionBtn.setAttribute("aria-pressed", redModeOn ? "true" : "false");
+        visionBtn.title = redModeOn
+          ? "Return to normal (white) display"
+          : "Night vision: red display for dark-adapted eyes";
+      }
+    }
+
+    visionBtn?.addEventListener("click", (e) => {
+      e.preventDefault();
+      setRedMode(!redModeOn);
+    });
 
     const fit = FitToScreen.create({
       stage: "fit-stage",

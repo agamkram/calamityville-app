@@ -115,6 +115,10 @@ let animationId = null;
 let refreshTimer = null;
 let eventsLoading = false;
 let touchLikeControls = false;
+/** Slow continuous camera orbit — SuperMoon pace: one full turn ~100s. */
+let orbiting = false;
+/** OrbitControls: speed 2.0 ≈ 30s/turn @60fps → 0.6 ≈ 100s/turn. */
+const ORBIT_AUTO_ROTATE_SPEED = 0.6;
 
 const EVENT_REFRESH_MS = 5 * 60 * 1000;
 
@@ -276,6 +280,27 @@ function setViewCenter(center) {
     camera.position.copy(EARTH_TARGET).add(_viewDir);
   }
   controls.update();
+}
+
+function setOrbitUI(on) {
+  const btn = document.getElementById("orbit-btn");
+  if (!btn) return;
+  const active = !!on;
+  btn.classList.toggle("active", active);
+  btn.setAttribute("aria-pressed", active ? "true" : "false");
+  btn.title = active
+    ? "Stop continuous orbit"
+    : "Slow continuous orbit (tap again to stop)";
+}
+
+function setOrbiting(on) {
+  orbiting = !!on;
+  if (controls) {
+    controls.autoRotate = orbiting;
+    controls.autoRotateSpeed = ORBIT_AUTO_ROTATE_SPEED;
+  }
+  setOrbitUI(orbiting);
+  return orbiting;
 }
 
 function configureSkyTexture(tex) {
@@ -827,6 +852,8 @@ function initScene() {
   controls.rotateSpeed = MOUSE_ROTATE_SPEED;
   controls.zoomSpeed = WHEEL_ZOOM_SPEED;
   controls.enableZoom = true;
+  controls.autoRotate = orbiting;
+  controls.autoRotateSpeed = ORBIT_AUTO_ROTATE_SPEED;
   applyControlSpeed(isCoarsePointer() ? "touch" : "mouse");
   canvas.addEventListener("wheel", () => applyControlSpeed("mouse"), { passive: true });
   canvas.addEventListener("pointerdown", (e) => applyControlSpeed(e.pointerType), { capture: true });
@@ -849,6 +876,12 @@ function initScene() {
   document.querySelectorAll(".center-btn").forEach((btn) => {
     btn.addEventListener("click", () => setViewCenter(btn.dataset.center));
   });
+
+  const orbitBtn = document.getElementById("orbit-btn");
+  orbitBtn?.addEventListener("click", () => {
+    setOrbiting(!orbiting);
+  });
+  setOrbitUI(orbiting);
 
   document.querySelectorAll(".legend-item").forEach((btn) => {
     btn.addEventListener("click", () => toggleLegendType(btn.dataset.type));
@@ -912,6 +945,9 @@ export function destroyGlobe() {
   stopEventRefresh();
   if (animationId) cancelAnimationFrame(animationId);
   animationId = null;
+  orbiting = false;
+  if (controls) controls.autoRotate = false;
+  setOrbitUI(false);
 
   canvas.removeEventListener("pointerdown", onPointerDown);
   sheetClose.removeEventListener("click", hideEventSheet);
