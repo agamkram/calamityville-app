@@ -87,6 +87,8 @@ const CURATED_VOLCANOES = [
 
 const FETCH_TIMEOUT_MS = 20_000;
 const FIRMS_FETCH_TIMEOUT_MS = 45_000;
+/** GDACS via RSS proxy — allow enough time for 7d feed; still fail closed. */
+const GDACS_FETCH_TIMEOUT_MS = 12_000;
 /** Cap clustered satellite fire pins so savanna burn seasons don't bury the globe. */
 const FIRMS_MAX_EVENTS = 280;
 const FIRMS_MIN_CONFIDENCE = 80;
@@ -1027,32 +1029,13 @@ function parseGdacsFeature(feature, hours) {
 }
 
 async function fetchGdacsJson(hours) {
-  const urls =
-    typeof window !== "undefined"
-      ? [`/api/gdacs?hours=${hours}`, null]
-      : [
-          "https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH" +
-            `?eventlist=${encodeURIComponent("WF;FL;VO;TC")}` +
-            "&alertlevel=Green;Orange;Red" +
-            `&fromdate=${new Date(Date.now() - (hours + 21 * 24) * 3600_000).toISOString().slice(0, 10)}` +
-            `&todate=${new Date().toISOString().slice(0, 10)}`,
-        ];
-
-  // Browser: proxy only (CORS). Node tests: direct SEARCH URL.
-  const candidates = urls.filter(Boolean);
-  let lastError;
-  for (const url of candidates) {
-    try {
-      const res = await fetchWithTimeout(url, {
-        headers: { Accept: "application/json", "User-Agent": "calamityville" },
-      });
-      if (!res.ok) throw new Error(`GDACS HTTP ${res.status}`);
-      return await res.json();
-    } catch (err) {
-      lastError = err;
-    }
-  }
-  throw lastError || new Error("GDACS unavailable");
+  // Same-origin RSS proxy (SEARCH JSON hangs; direct gdacs.org is CORS-blocked).
+  const res = await fetchWithTimeout(`/api/gdacs?hours=${hours}`, {
+    headers: { Accept: "application/json", "User-Agent": "calamityville" },
+    timeoutMs: GDACS_FETCH_TIMEOUT_MS,
+  });
+  if (!res.ok) throw new Error(`GDACS HTTP ${res.status}`);
+  return res.json();
 }
 
 async function fetchGdacs(hours) {
@@ -1185,32 +1168,23 @@ async function fetchFirmsWildfires(hours) {
   return clusterFirmsPoints(points, hours);
 }
 
-export async function fetchDisasters(hours = 24) {
-  const [
-    eqResult,
-    nhcResult,
-    eonetResult,
-    tornadoResult,
-    tsunamiResult,
-    canadaFireResult,
-    gdacsResult,
-    firmsResult,
-  ] = await Promise.allSettled([
-    fetchEarthquakes(hours),
-    fetchHurricanes(),
-    fetchEonet(hours),
-    fetchTornadoes(hours),
-    fetchTsunamis(hours),
-    fetchCanadaWildfires(hours),
-    fetchGdacs(hours),
-    fetchFirmsWildfires(hours),
-  ]);
+const EMPTY_GDACS = { fires: [], floods: [], storms: [], volcanoes: [] };
 
+function assembleDisasterEvents({
+  eqResult,
+  nhcResult,
+  eonetResult,
+  tornadoResult,
+  tsunamiResult,
+  canadaFireResult,
+  firmsResult,
+  gdacsResult,
+}) {
   const events = [];
   const errors = [];
 
   if (eqResult.status === "fulfilled") events.push(...eqResult.value);
-  else errors.push("earthquakes");
+  else if (eqResult.status === "rejected") errors.push("earthquakes");
 
   let eonetStorms = [];
   let eonetFires = [];
@@ -1223,17 +1197,16 @@ export async function fetchDisasters(hours = 24) {
     eonetFloods = general.filter((e) => e.type === "flood");
     eonetVolcanoes = general.filter((e) => e.type === "volcano");
     eonetStorms = eonet?.severeStorms || [];
-  } else {
+  } else if (eonetResult.status === "rejected") {
     errors.push("eonet");
   }
 
   const gdacs =
-    gdacsResult.status === "fulfilled"
-      ? gdacsResult.value
-      : { fires: [], floods: [], storms: [], volcanoes: [] };
-  if (gdacsResult.status === "rejected") errors.push("gdacs");
+    gdacsResult?.status === "fulfilled" ? gdacsResult.value : EMPTY_GDACS;
+  if (gdacsResult?.status === "rejected") errors.push("gdacs");
 
-  const canadaFires = canadaFireResult.status === "fulfilled" ? canadaFireResult.value : [];
+  const canadaFires =
+    canadaFireResult.status === "fulfilled" ? canadaFireResult.value : [];
   if (canadaFireResult.status === "rejected") errors.push("canada-fires");
 
   const firmsFires = firmsResult.status === "fulfilled" ? firmsResult.value : [];
@@ -1253,10 +1226,10 @@ export async function fetchDisasters(hours = 24) {
   }
 
   if (tornadoResult.status === "fulfilled") events.push(...tornadoResult.value);
-  else errors.push("tornadoes");
+  else if (tornadoResult.status === "rejected") errors.push("tornadoes");
 
   if (tsunamiResult.status === "fulfilled") events.push(...tsunamiResult.value);
-  else errors.push("tsunamis");
+  else if (tsunamiResult.status === "rejected") errors.push("tsunamis");
 
   const hasVolcano = events.some((e) => e.type === "volcano");
   if (!hasVolcano) {
@@ -1270,6 +1243,59 @@ export async function fetchDisasters(hours = 24) {
 
   events.sort((a, b) => (b.time || 0) - (a.time || 0));
   return { events, errors };
+}
+
+/**
+ * Load disasters. Fast feeds paint first via onPartial; GDACS merges later
+ * (short timeout) so a hung SEARCH API can't block the globe.
+ */
+export async function fetchDisasters(hours = 24, { onPartial } = {}) {
+  const eqP = fetchEarthquakes(hours);
+  const nhcP = fetchHurricanes();
+  const eonetP = fetchEonet(hours);
+  const tornadoP = fetchTornadoes(hours);
+  const tsunamiP = fetchTsunamis(hours);
+  const canadaP = fetchCanadaWildfires(hours);
+  const firmsP = fetchFirmsWildfires(hours);
+  const gdacsP = fetchGdacs(hours);
+
+  const [
+    eqResult,
+    nhcResult,
+    eonetResult,
+    tornadoResult,
+    tsunamiResult,
+    canadaFireResult,
+    firmsResult,
+  ] = await Promise.allSettled([eqP, nhcP, eonetP, tornadoP, tsunamiP, canadaP, firmsP]);
+
+  const partial = assembleDisasterEvents({
+    eqResult,
+    nhcResult,
+    eonetResult,
+    tornadoResult,
+    tsunamiResult,
+    canadaFireResult,
+    firmsResult,
+    // Fresh empty buckets so assemble never mutates the shared constant.
+    gdacsResult: {
+      status: "fulfilled",
+      value: { fires: [], floods: [], storms: [], volcanoes: [] },
+    },
+  });
+  onPartial?.(partial);
+
+  const gdacsResult = await Promise.allSettled([gdacsP]).then(([r]) => r);
+  return assembleDisasterEvents({
+    eqResult,
+    nhcResult,
+    eonetResult,
+    tornadoResult,
+    tsunamiResult,
+    canadaFireResult,
+    firmsResult,
+    gdacsResult,
+  });
 }
 
 async function fetchEarthquakes(hours) {

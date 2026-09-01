@@ -773,20 +773,42 @@ function hideEventSheet() {
   sheetBackdrop.classList.remove("open");
 }
 
+let eventsLoadId = 0;
+
 async function loadEvents(hours, { background = false } = {}) {
-  if (eventsLoading) return;
+  // Background refresh: skip if a load is already in flight.
+  if (background && eventsLoading) return;
+  const loadId = ++eventsLoadId;
   eventsLoading = true;
   currentHours = hours;
   if (!background) loadingEl?.classList.add("visible");
+
+  const applyIfCurrent = (payload) => {
+    if (loadId !== eventsLoadId) return false;
+    setPins(payload.events);
+    return true;
+  };
+
   try {
-    const { events, errors } = await fetchDisasters(hours);
-    setPins(events);
+    const { events, errors } = await fetchDisasters(hours, {
+      onPartial: (partial) => {
+        if (!applyIfCurrent(partial)) return;
+        // Globe is usable as soon as the fast feeds land; GDACS may still be pending.
+        if (!background) loadingEl?.classList.remove("visible");
+        if (partial.errors?.length) {
+          console.warn("Partial disaster data:", partial.errors.join(", "));
+        }
+      },
+    });
+    if (!applyIfCurrent({ events })) return;
     if (errors.length) console.warn("Partial disaster data:", errors.join(", "));
   } catch (err) {
     console.error(err);
   } finally {
-    if (!background) loadingEl?.classList.remove("visible");
-    eventsLoading = false;
+    if (loadId === eventsLoadId) {
+      if (!background) loadingEl?.classList.remove("visible");
+      eventsLoading = false;
+    }
   }
 }
 
